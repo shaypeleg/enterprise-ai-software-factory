@@ -237,6 +237,12 @@ form.addEventListener('submit', async (event) => {
     if (!saved.verified) element('saved-path').textContent += ' Connection unverified.';
     element('finish').hidden = !settings.repositories;
     element('skill-command').textContent = settings.repositories ? '$factory workspace list' : '$factory';
+    const command = settings.repositories ? '$factory workspace' : '$factory';
+    element('dashboard-command').textContent = `${command} dashboard`;
+    element('queue-command').textContent = `${command} queue`;
+    const issue = settings.repositories && settings.selected !== '.' ? `${settings.selected}=42` : '42';
+    element('run-command').textContent = `${command} run ${issue}`;
+    element('saved-queue-label').textContent = payload.config.scm.queue_label;
     if (settings.repositories) {
       element('workspace-repository').selectedOptions[0].textContent = repositoryLabel(settings.selected, 'configured');
     }

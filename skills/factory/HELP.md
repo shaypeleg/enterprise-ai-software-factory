@@ -6,7 +6,8 @@ The factory turns labeled GitHub or GitLab issues into reviewed code changes. It
 
 1. In the target project, use `$factory setup` to open the browser wizard. Confirm the repository, choose a default OpenAI model and any role-specific overrides, and review the commands the factory should run as checks.
 2. Use **Test connection** to confirm that the factory can read issues. Use the workspace’s Git credentials or the configured Git token environment variable. Agent runs use a separate `CODEX_API_KEY`.
-3. Apply the configured queue label to an open issue. The default is `factory:ready`. Run `$factory queue` to list matching issues, then `$factory run 42`, replacing `42` with your issue number.
+3. Create the configured issue label if it is missing. The default is `factory:ready` (one colon). In GitLab, use **Manage → Labels → New label**. In GitHub, use **Issues → Labels → New label**. Apply the exact label to an open issue. One label is enough.
+4. Run `$factory dashboard` and open the private browser link to watch the job. Use `$factory queue` to confirm the issue appears, then start it with `$factory run 42`, replacing `42` with your issue number. Labeling an issue adds it to the queue. Starting it is a separate command.
 
 ## Follow a run
 

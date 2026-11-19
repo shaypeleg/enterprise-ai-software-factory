@@ -44,7 +44,8 @@
             <label class="wide">HTTPS clone URL<input type="url" id="git_url" required autocomplete="off"></label>
             <label class="wide">API endpoint<input type="url" id="api_url" required autocomplete="off"></label>
             <label>Base branch<input id="base_branch" required autocomplete="off"></label>
-            <label>Issue queue label<input id="queue_label" required autocomplete="off"></label>
+            <label>Issue queue label<input id="queue_label" required autocomplete="off" aria-describedby="queue-label-help"></label>
+            <p id="queue-label-help" class="hint wide">The default is <code>factory:ready</code>. Create this issue label in GitLab under <strong>Manage → Labels</strong> or in GitHub under <strong>Issues → Labels</strong>. Apply the exact label to open issues you want the factory to pick up. One label is enough.</p>
           </div>
         </section>
         <section class="panel" aria-labelledby="models-title" hidden>
@@ -85,6 +86,11 @@
       <section id="saved" class="saved" hidden aria-live="polite">
         <h2 tabindex="-1">Configuration saved</h2>
         <p>Open this project in Codex and select <strong>Factory</strong> from <code>/skills</code>, or type <code id="skill-command">$factory</code>.</p>
+        <ol>
+          <li>Start the live dashboard in Codex with <code id="dashboard-command">$factory dashboard</code>. Open the private browser link it prints.</li>
+          <li>Apply the label <code id="saved-queue-label"></code> to an open issue, then run <code id="queue-command">$factory queue</code> to confirm it appears.</li>
+          <li>Start the issue explicitly with <code id="run-command">$factory run 42</code>, using your issue number. Follow its progress in the dashboard.</li>
+        </ol>
         <p id="saved-path" class="hint"></p>
         <button type="button" id="finish" hidden>Finish workspace setup</button>
       </section>

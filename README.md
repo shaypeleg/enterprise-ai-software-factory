@@ -20,17 +20,24 @@ staging and production steps to connect in your own CI. [CI integration requirem
    with your workspace’s Git credentials or a Git token environment variable. Set
    `CODEX_API_KEY` in the environment Codex uses for runs. For several checkouts,
    add `--workspace` to installation. [Workspace setup](#work-with-multiple-repositories)
-3. **Run an issue in Codex.** Apply the configured queue label to an open issue,
-   then open the same checkout in Codex. Replace `42` with your issue number.
+3. **Label an issue.** Create the configured issue label if it is missing. The
+   default is `factory:ready` (one colon). In GitLab, go to **Manage → Labels →
+   New label**. In GitHub, go to **Issues → Labels → New label**. Apply the
+   exact label to an open issue. This is the only label the factory requires.
+4. **Watch and run the issue in Codex.** Open the same checkout in Codex, start
+   the live dashboard, and open the private browser link. Verify the issue is
+   in the queue, then start it by number. Labeling an issue makes it eligible
+   for the queue. The run starts when you invoke it.
 
    ```text
+   $factory dashboard
    $factory queue
    $factory run 42
-   $factory status
    ```
 
-   Review the local candidate. When you want a draft PR/MR, run
-   `$factory publish 42`. In workspace mode, use
+   Replace `42` with your issue number. Review the local candidate and run
+   `$factory publish 42` when you want a draft PR/MR. In workspace mode, use
+   `$factory workspace dashboard` to watch all configured checkouts and
    `$factory workspace run 42` to start from the parent issue.
 
 ## Scope of this pilot
