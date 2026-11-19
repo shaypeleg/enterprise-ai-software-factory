@@ -17,7 +17,10 @@ def require(condition, message):
 
 def load(path):
     path = Path(path).resolve()
-    config = json.loads(path.read_text())
+    return validate(json.loads(path.read_text()), path)
+
+
+def validate(config, path):
     require(config.get("version") == 1, "unsupported configuration version")
     require(config.get("execution_mode") == "local-pilot", "only local-pilot is implemented")
     scm = config["scm"]

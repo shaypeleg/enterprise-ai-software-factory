@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Refused, require
+from .project import discovered_remote
 from .runtime import clean_env, execute
 
 
 PROTECTED = (".git*", ".github/**", ".gitlab/**", ".codex/**", ".agents/**",
-             "AGENTS.md", "**/AGENTS.md", "factory/**")
+             "AGENTS.md", "**/AGENTS.md", ".factory-settings.json", "factory/**")
 STOP = {"ready", "needs-human", "needs-info", "rejected", "published"}
 
 
@@ -112,7 +113,7 @@ class Engine:
         root = self.git(self.checkout, "rev-parse", "--show-toplevel").stdout.decode().strip()
         require(Path(root).resolve() == self.checkout, "checkout must be the Git repository root")
         remote = self.git(self.checkout, "remote", "get-url", "origin").stdout.decode().strip()
-        require(remote == self.config["git_url"], "origin differs from configured git_url")
+        require(discovered_remote(remote) == self.config["git_url"], "origin differs from configured git_url")
         # Repositories with local URL rewrites could send a publisher token to another host.
         rewrites = self.git(self.checkout, "config", "--includes", "--local", "--get-regexp",
                             r"^(url\.|http\.|core\.sshcommand)", check=False)

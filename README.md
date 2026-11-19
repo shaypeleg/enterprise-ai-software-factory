@@ -56,7 +56,8 @@ candidate's sign-off when the environment changes.
 ## Requirements
 
 - Python 3.9+ standard library, Git, and the OpenAI Codex CLI. No Python dependencies.
-- A dedicated HTTPS target checkout with `origin` matching `git_url` exactly.
+- Node.js 18+ with npm and `npx` for the `npx` installer.
+- A dedicated target checkout with a credential-free HTTPS or SSH `origin`.
 - Operator-owned configuration and a private state directory **outside** that checkout.
 - An OpenAI model available to your organization, selected in configuration.
 - SCM credentials scoped to the configured repository. Keep production credentials
@@ -68,126 +69,93 @@ authentication. Each role is a fresh Codex invocation; routing and state are
 implemented in Python. Model IDs can be configured per role (`intake`, `spec`,
 `build`, `code`, `security`, `ux`, `ui`, `handoff`), falling back to `default`.
 
-## Clone the factory
+## Install the skill with npx
+
+Install the [OpenAI Codex CLI](https://developers.openai.com/codex/cli/) if needed.
+In your application’s existing Git checkout, run:
+
+```bash
+cd /path/to/your/application
+npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install
+```
+
+Approve npm’s install prompt if it appears. `npx` fetches the installer directly
+from GitHub. The installer keeps the runtime in your user data directory
+(`$XDG_DATA_HOME` or `~/.local/share`) so it remains available after npm clears
+its cache. It links `.agents/skills/factory` to that local copy and opens the
+browser wizard. Leave this machine-local symlink out of version control.
+
+If the browser cannot open, use the private URL printed in your terminal. From
+another directory, pass `--project /path/to/your/application`. Add `--no-browser`
+to print the private URL without opening a tab:
+
+```bash
+npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- \
+  factory-install --project /path/to/your/application --no-browser
+```
+
+For source development, clone the factory separately. The Python installer uses
+that checkout as the skill’s runtime:
 
 ```bash
 git clone https://github.com/shaypeleg/enterprise-ai-software-factory.git
 cd enterprise-ai-software-factory
+python3 install.py --project /path/to/your/application
 ```
 
-The repository root contains `factory/`, `tests/`, and `config.example.json`.
-Run all commands below from this root. Install the
-[OpenAI Codex CLI](https://developers.openai.com/codex/cli/) if needed, then
-verify the required tools:
+If the project already uses a symlink from the Python installer, remove that
+symlink before switching to `npx`. Your saved configuration stays in your user
+configuration directory.
 
-```bash
-python3 --version
-git --version
-codex --version
+## Configure in the browser
+
+The wizard shows the full delivery workflow, including the future staging and
+production CI steps. It detects the application's Git origin, suggests the
+repository and branch, and lets you select GitHub or GitLab and edit the API
+endpoint. For HTTPS, use the exact origin URL. For SSH, the factory uses the
+HTTPS equivalent for Git operations. Self-managed hosts that cannot be identified
+by name need an explicit provider selection.
+
+Choose a default OpenAI model ID and optionally override it for each role. Model
+suggestions are examples. Use IDs available to your OpenAI API project. Add the
+application's checks as JSON argument arrays, for example
+`[["npm", "test"], ["npm", "run", "lint"]]`. The access step asks you to approve
+those commands and the selected endpoint. Supply `CODEX_API_KEY` and the configured
+SCM token separately through your secret manager or launch environment. The
+wizard saves configuration locally and does not request or test credential values.
+
+To share settings with teammates, select **Also save a shareable preset** to write
+`.factory-settings.json` in the application root. Review it before committing.
+Keep token values, local paths, and job state outside this file. Each developer
+installs the skill locally and approves the preset in the wizard before it can be
+used. An existing private setup takes precedence over a project preset. Changing
+local settings starts a new job state directory and preserves the previous one.
+
+## Invoke in Codex
+
+Open the target application in Codex. Select **Factory** from `/skills` or type
+`$factory`. Codex's skill mechanism does not register a custom `/factory` slash
+command. If the skill picker has not refreshed, reopen the project or restart Codex.
+See the [Codex skill documentation](https://learn.chatgpt.com/docs/build-skills).
+
+```text
+$factory setup
+$factory queue
+$factory status
+$factory run 42
+$factory publish 42
 ```
 
-No Python package installation is required. This repository hosts the factory
-controller; the target repository is the application you want it to work on.
-Use a separate dedicated clone of that application. For example, replacing the
-GitLab URL with your actual application URL:
+Replace `42` with an open issue carrying the configured label. `run` prepares a
+local candidate. `publish` opens a draft PR/MR for a passing candidate. You can
+explicitly request `$factory run 42 --publish` to do both. Setup can be re-opened
+with `$factory setup`.
 
-```bash
-mkdir -p "$HOME/dev"
-git clone https://gitlab.example.com/team/application.git "$HOME/dev/factory-target"
-```
+For direct CLI use, run `python3 -m factory --project /path/to/application validate`
+from the factory checkout. The existing `--config /path/to/config.json` option is
+available for operator-managed, out-of-tree configuration using
+[`config.example.json`](config.example.json).
 
-The factory repository can be hosted on GitHub while the application and its
-issue queue are hosted on GitLab, or the reverse.
-
-## Configure
-
-Create private directories for configuration and runtime state, outside the
-target application checkout. Preserve any configuration already present:
-
-```bash
-mkdir -p "$HOME/.config/enterprise-ai-software-factory"
-mkdir -p "$HOME/.local/state/enterprise-ai-software-factory"
-chmod 700 "$HOME/.config/enterprise-ai-software-factory"
-chmod 700 "$HOME/.local/state/enterprise-ai-software-factory"
-cp -n config.example.json "$HOME/.config/enterprise-ai-software-factory/config.json"
-```
-
-Edit the copied JSON file before running. Use literal absolute paths in JSON;
-`~` and `$HOME` are not expanded by the configuration loader.
-
-- `checkout`: the absolute path of the application clone, such as
-  `/Users/your-name/dev/factory-target`.
-- `state_dir`: the absolute path of the private state directory created above,
-  such as `/Users/your-name/.local/state/enterprise-ai-software-factory`.
-- `git_url`, `base_branch`: the exact HTTPS remote and intended PR/MR target.
-- `scm`: the provider, API URL, repository, token environment variable and queue label.
-- `models.default`: replace the model placeholder with an available OpenAI model ID.
-- `checks`: actual test/lint/typecheck/build commands as argument arrays. The
-  example command deliberately fails until replaced. Dependency installation
-  must be an explicit check/setup command, using your existing lockfile tooling.
-- `protected_paths`: additional infrastructure, policy and release files.
-
-GitLab supports self-managed hosts and nested groups, for example
-`api_url: https://gitlab.company.example/api/v4` and
-`repository: engineering/platform/application`.
-
-For GitHub use `provider: github`, `api_url: https://api.github.com`,
-`repository: organization/application`, an appropriate `git_url`, and a
-`token_env` such as `FACTORY_GITHUB_TOKEN`. GitHub Enterprise Server can use its
-explicit HTTPS API base such as `https://git.company.example/api/v3`.
-
-For example, a GitHub target application uses these fields (replace the owner
-and application names; retain the other fields from the example configuration):
-
-```json
-{
-  "git_url": "https://github.com/YOUR_ORG/YOUR_APP.git",
-  "scm": {
-    "provider": "github",
-    "api_url": "https://api.github.com",
-    "repository": "YOUR_ORG/YOUR_APP",
-    "token_env": "FACTORY_GITHUB_TOKEN",
-    "queue_label": "factory:ready"
-  }
-}
-```
-
-Apply the configured queue label to an open issue in that target application.
-`git_url` must match the application's `origin` exactly. The factory repository
-URL above is the source-installation URL, not automatically your application's URL.
-
-Provision tokens in your secret manager/environment; do not put them in JSON.
-The local pilot reads `CODEX_API_KEY` for Codex and the configured token variable
-for SCM calls. API keys are an automation authentication option, with their own
-organization billing and policies; a ChatGPT subscription is not an API budget.
-
-## Run
-
-From the factory repository root, after setting credentials through your normal
-secret-management mechanism:
-
-```bash
-FACTORY_CONFIG="$HOME/.config/enterprise-ai-software-factory/config.json"
-python3 -m factory --config "$FACTORY_CONFIG" validate
-python3 -m factory --config "$FACTORY_CONFIG" queue
-python3 -m factory --config "$FACTORY_CONFIG" run 42
-python3 -m factory --config "$FACTORY_CONFIG" status
-```
-
-Replace `42` with an open issue number carrying the configured label. The
-`validate` command checks local configuration; it does not verify credentials,
-model availability, provider permissions or deployment integrations. The shipped
-example intentionally needs real paths, a model ID and project checks before use.
-
-`run` makes only local changes. To explicitly authorize committing, pushing the
-candidate branch and creating a draft PR/MR after the factory's gates pass:
-
-```bash
-python3 -m factory --config "$FACTORY_CONFIG" run 42 --publish
-```
-
-Or inspect a local `ready` job first, then use `publish 42`. Neither command
-deploys; production/staging deployment credentials are never requested.
 The `release_intent` output identifies staging and the exact commit for a future
 trusted deployment adapter. It is **unsigned advisory data, not deployment authorization**.
 

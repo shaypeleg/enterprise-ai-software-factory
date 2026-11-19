@@ -418,6 +418,7 @@ class RuntimeTests(unittest.TestCase):
             captured = []
 
             def fake_execute(argv, cwd, env, timeout, log, stdin):
+                self.assertTrue(Path(env["CODEX_HOME"]).is_dir())
                 captured.append((argv, env))
                 Path(argv[argv.index("--output-last-message") + 1]).write_text(json.dumps({
                     "verdict": "PASS", "report": "Reviewed", "risk": "low", "surfaces": []}))

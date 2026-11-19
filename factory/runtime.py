@@ -89,7 +89,9 @@ class Codex:
             schema_path, result_path = home / "schema.json", home / "result.json"
             schema_path.write_text(json.dumps(schema))
             env = clean_env(home)
-            env["CODEX_HOME"] = str(home / ".codex")
+            codex_home = home / ".codex"
+            codex_home.mkdir(mode=0o700)
+            env["CODEX_HOME"] = str(codex_home)
             key = os.environ.get("CODEX_API_KEY")
             require(key, "CODEX_API_KEY is required for pilot execution")
             env["CODEX_API_KEY"] = key

@@ -1,0 +1,22 @@
+{
+  "name": "enterprise-ai-software-factory",
+  "version": "0.1.0",
+  "description": "Install the Enterprise AI Software Factory skill for Codex",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "bin": {
+    "factory-install": "bin/factory-install.cjs"
+  },
+  "files": [
+    "bin/factory-install.cjs",
+    "install.py",
+    "config.example.json",
+    "factory/**/*.py",
+    "factory/setup_ui/*",
+    "skills/factory/**",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

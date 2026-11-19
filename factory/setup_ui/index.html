@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configure Factory</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true"></span> Factory</div><span class="local">Local setup</span></header>
+  <main class="layout">
+    <aside class="flow" aria-labelledby="workflow-title">
+      <h2 id="workflow-title">Delivery workflow</h2>
+      <ol>
+        <li><strong>Issue queue</strong><span>Read labeled issues from GitHub or GitLab.</span></li>
+        <li><strong>Intake &amp; specification</strong><span>Scope the issue and define what must pass.</span></li>
+        <li><strong>Build</strong><span>Implement in a separate worktree.</span></li>
+        <li><strong>Checks</strong><span>Run your test, lint, or build commands.</span></li>
+        <li><strong>Independent review</strong><span>Code and security every run. UX and UI for interface work.</span></li>
+        <li><strong>Handoff &amp; draft PR/MR</strong><span>Summarize evidence. Publish when requested.</span></li>
+        <li class="planned"><strong>Staging</strong><span>Automatic after passing gates, once trusted CI is connected.</span></li>
+        <li class="planned"><strong>Production</strong><span>Your manual merge authorizes release through CI.</span></li>
+      </ol>
+      <p class="flow-note">A failed check or review sends work back to build. The factory stops after the configured round limit.</p>
+    </aside>
+    <section class="workspace" aria-labelledby="title">
+      <h1 id="title">Configure your factory</h1>
+      <p class="intro">Connect a project, assign models, and choose the checks every candidate must pass.</p>
+      <p id="project" class="project" hidden></p>
+      <nav aria-label="Setup progress" class="steps"><ol>
+        <li aria-current="step">Repository</li><li>Models</li><li>Checks &amp; access</li>
+      </ol></nav>
+      <p id="message" role="alert" class="notice" hidden></p>
+      <p id="loading" role="status">Loading project settings…</p>
+      <form id="setup" hidden>
+        <section class="panel" aria-labelledby="repository-title">
+          <h2 id="repository-title" tabindex="-1">Repository connection</h2>
+          <p id="origin-hint" class="muted"></p>
+          <div class="fields">
+            <label>Git provider<select id="provider" required><option value="">Choose a provider</option><option value="github">GitHub</option><option value="gitlab">GitLab</option></select></label>
+            <label>Repository path<input id="repository" required placeholder="team/application" autocomplete="off"></label>
+            <label class="wide">HTTPS clone URL<input type="url" id="git_url" required autocomplete="off"></label>
+            <label class="wide">API endpoint<input type="url" id="api_url" required autocomplete="off"></label>
+            <label>Base branch<input id="base_branch" required autocomplete="off"></label>
+            <label>Issue queue label<input id="queue_label" required autocomplete="off"></label>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="models-title" hidden>
+          <h2 id="models-title" tabindex="-1">Models by role</h2>
+          <p class="muted">Use model IDs available to your OpenAI API project. Leave a role blank to use the default.</p>
+          <datalist id="model-ids"><option value="gpt-6.2-sol"><option value="gpt-6.2-astra"><option value="gpt-5.4-mini"></datalist>
+          <label class="default-model">Default model<input id="default-model" list="model-ids" placeholder="e.g. gpt-6.2-sol" required autocomplete="off"></label>
+          <div id="roles" class="roles"></div>
+        </section>
+        <section class="panel" aria-labelledby="checks-title" hidden>
+          <h2 id="checks-title" tabindex="-1">Checks &amp; access</h2>
+          <label>Required check commands<textarea id="checks" rows="4" aria-describedby="checks-help" placeholder='[ ["npm", "test"], ["npm", "run", "lint"] ]' required spellcheck="false"></textarea></label>
+          <p class="hint" id="checks-help">Enter a JSON array of commands. Each command is an array of arguments. The wizard saves these commands and the factory runs them during a job.</p>
+          <details><summary>Advanced check settings</summary><div class="fields">
+            <label class="wide">Protected path patterns<textarea id="protected_paths" rows="3" placeholder="One pattern per line" spellcheck="false"></textarea></label>
+            <label>Build round limit<input type="number" id="max_rounds" min="1" max="10" required></label>
+            <label>Check timeout in seconds<input type="number" id="check_timeout_seconds" min="1" max="3600" required></label>
+            <label>Agent timeout in seconds<input type="number" id="agent_timeout_seconds" min="1" max="3600" required></label>
+          </div></details>
+          <div class="access">
+            <h3>Credential access</h3>
+            <p id="permission-target" class="project"></p>
+            <p id="permissions"></p>
+            <label>Git token environment variable<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off"></label>
+            <p class="hint">Set this variable and <code>CODEX_API_KEY</code> in the environment that runs Codex. This page never requests token values.</p>
+            <label class="option"><input type="checkbox" id="consent" required><span>I approve this repository, endpoint, and check commands for use by the factory.</span></label>
+            <label class="option"><input type="checkbox" id="share"><span>Also save a shareable <code>.factory-settings.json</code> preset in the project. Review the settings before committing it. Keep secrets out of check commands.</span></label>
+          </div>
+        </section>
+        <div class="actions"><button type="button" class="back" id="back" hidden>Back</button><button type="submit" id="next">Continue</button></div>
+      </form>
+      <section id="saved" class="saved" hidden aria-live="polite">
+        <h2 tabindex="-1">Configuration saved</h2>
+        <p>Open this project in Codex and select <strong>Factory</strong> from <code>/skills</code>, or type <code>$factory</code>.</p>
+        <p id="saved-path" class="hint"></p>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
