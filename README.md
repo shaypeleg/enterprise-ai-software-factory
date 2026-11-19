@@ -1,29 +1,9 @@
 # Enterprise AI Software Factory — Codex pilot
 
-```mermaid
-flowchart TD
-    Issue["1. Select a labeled GitHub or GitLab issue"] --> Intake["2. Pin the base, assess scope, and write the spec"]
-    Intake -->|Accepted and specified| Build["3. Build in a separate Git worktree"]
-    Intake -->|Rejected, unclear, or blocked| Park["Stop and report the reason"]
-    Build --> Gate{"4. Required checks pass?"}
-    Build -->|Builder blocked| Park
-    Gate -->|Yes| Review{"5. Code and security reviews pass?<br/>UI and UX review when applicable"}
-    Gate -->|No| Retry{"Revision rounds left?"}
-    Review -->|Changes requested| Retry
-    Retry -->|Yes, with feedback| Build
-    Retry -->|No| Park
-    Review -->|Pass| Handoff{"6. Handoff confirms the evidence?"}
-    Handoff -->|Blocked| Park
-    Handoff -->|Ready| Candidate["Candidate ready for human review"]
-    Candidate -->|Explicit publish command| Draft["7. Push candidate branch and open draft PR/MR"]
-    Draft -.-> Staging["8. Trusted CI deploys validated artifact to staging"]
-    Staging -.-> Approval["9. Human reviews staging and manually merges"]
-    Approval -.-> Prod["10. Trusted CI promotes the verified artifact"]
-```
+![Factory workflow from a labeled issue through intake, build, checks, reviews, and handoff. The factory retries within its limit and opens a draft PR or MR only when explicitly asked. Your CI deploys to staging, then promotes to production after human review and a manual merge.](docs/factory-workflow.jpg)
 
-Solid arrows are implemented by the factory. Dashed arrows show the release
-process to connect in your own CI. The pilot stops at a local candidate or draft
-PR/MR. [CI integration requirements](ENTERPRISE.md)
+The factory stops at a reviewed candidate or draft PR/MR. The lower track shows
+staging and production steps to connect in your own CI. [CI integration requirements](ENTERPRISE.md)
 
 ## Getting started
 
