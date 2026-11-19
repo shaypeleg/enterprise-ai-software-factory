@@ -56,20 +56,23 @@
         </section>
         <section class="panel" aria-labelledby="checks-title" hidden>
           <h2 id="checks-title" tabindex="-1">Checks &amp; access</h2>
-          <label>Required check commands<textarea id="checks" rows="4" aria-describedby="checks-help" placeholder='[ ["npm", "test"], ["npm", "run", "lint"] ]' required spellcheck="false"></textarea></label>
-          <p class="hint" id="checks-help">Enter a JSON array of commands. Each command is an array of arguments. The wizard saves these commands and the factory runs them during a job.</p>
+          <label>Required check commands<textarea id="checks" rows="6" aria-describedby="checks-suggestion checks-help" required spellcheck="false"></textarea></label>
+          <p class="hint" id="checks-suggestion"></p>
+          <p class="hint" id="checks-help">The factory runs these commands in order in the candidate’s worktree. Each JSON list is one command and its arguments.</p>
+          <button type="button" class="back" id="use-suggested-checks">Use suggested checks</button>
           <details><summary>Advanced check settings</summary><div class="fields">
             <label class="wide">Protected path patterns<textarea id="protected_paths" rows="3" placeholder="One pattern per line" spellcheck="false"></textarea></label>
             <label>Build round limit<input type="number" id="max_rounds" min="1" max="10" required></label>
-            <label>Check timeout in seconds<input type="number" id="check_timeout_seconds" min="1" max="3600" required></label>
-            <label>Agent timeout in seconds<input type="number" id="agent_timeout_seconds" min="1" max="3600" required></label>
+            <label>Timeout per check command (seconds)<input type="number" id="check_timeout_seconds" min="1" max="3600" aria-describedby="check-timeout-help" required><small id="check-timeout-help" class="hint">Default 300 seconds (5 minutes). Each command gets its own timer.</small></label>
+            <label>Timeout per agent invocation (seconds)<input type="number" id="agent_timeout_seconds" min="1" max="3600" aria-describedby="agent-timeout-help" required><small id="agent-timeout-help" class="hint">Default 900 seconds (15 minutes). Includes the agent’s tool calls. The complete job can run longer.</small></label>
           </div></details>
           <div class="access">
             <h3>Credential access</h3>
             <p id="permission-target" class="project"></p>
             <p id="permissions"></p>
-            <label>Git token environment variable<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off"></label>
-            <p class="hint">Set this variable in the environment that launches setup. The test uses it to read one page of issues from the selected endpoint. Tokens stay out of the browser.</p>
+            <label>Git credential source<select id="credential_source"><option value="workspace">Use workspace Git credentials</option><option value="environment">Use a token environment variable</option></select></label>
+            <label id="token-variable" hidden>Git token environment variable<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" autocomplete="off"></label>
+            <p class="hint" id="credential-help"></p>
             <button type="button" class="back" id="test-connection">Test connection</button>
             <p id="connection-status" class="hint" role="status">Connection unverified.</p>
             <label class="option" id="unverified-option"><input type="checkbox" id="allow-unverified"><span>Save settings without verifying the connection.</span></label>

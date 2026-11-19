@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -93,6 +94,15 @@ class EngineTests(unittest.TestCase):
                          self.base + "\trefs/heads/main")
         events = self.state.db.execute("SELECT event FROM events").fetchall()
         self.assertIn(("gate-pass",), events)
+
+    def test_authenticated_git_uses_workspace_credential(self):
+        self.config["scm"]["credential_source"] = "workspace"
+        git(self.repo, "config", "credential.helper", "")
+        git(self.repo, "config", "--add", "credential.helper",
+            "!f() { printf 'username=fixture-user\\npassword=fixture-token\\n'; }; f")
+        result = self.engine.git(self.repo, "config", "--get", "http.extraHeader", authenticate=True)
+        self.assertEqual(result.stdout.strip(), b"Authorization: Basic " +
+                         base64.b64encode(b"fixture-user:fixture-token"))
 
     def test_parent_candidate_preserves_unchanged_submodule_pointer(self):
         git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{self.base},backend")

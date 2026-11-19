@@ -16,8 +16,8 @@ staging and production steps to connect in your own CI. [CI integration requirem
    ```
 
 2. **Complete the browser wizard.** Select the repository, pick a model, and
-   enter the project’s checks. Use **Test connection** to verify issue access
-   with the GitHub or GitLab token from the installer’s environment. Set
+   review the suggested checks. Use **Test connection** to verify issue access
+   with your workspace’s Git credentials or a Git token environment variable. Set
    `CODEX_API_KEY` in the environment Codex uses for runs. For several checkouts,
    add `--workspace` to installation. [Workspace setup](#work-with-multiple-repositories)
 3. **Run an issue in Codex.** Apply the configured queue label to an open issue,
@@ -135,18 +135,29 @@ endpoint. For HTTPS, use the exact origin URL. For SSH, the factory uses the
 HTTPS equivalent for Git operations. Self-managed hosts that cannot be identified
 by name need an explicit provider selection.
 
-Choose a default OpenAI model ID and optionally override it for each role. Model
-suggestions are examples. Use IDs available to your OpenAI API project. Add the
-application's checks as JSON argument arrays, for example
-`[["npm", "test"], ["npm", "run", "lint"]]`. The access step asks you to approve
-those commands and the selected endpoint. Supply the configured Git token in
-the process environment before opening setup, then select **Test connection**.
-The wizard uses the repository issues API to verify read access. It sends the
-token only to the Git origin’s HTTPS host and port or the official GitHub API
-for `github.com`. The browser receives a status message. Verification does not
-check push or publication permissions. Save unverified explicitly if you are
-working offline or your API is served through a separate host. Supply
-`CODEX_API_KEY` separately for Codex runs.
+Choose a default OpenAI model ID and optionally override it for each role. Use
+IDs available to your OpenAI API project. New setups suggest checks from
+recognized Python GitLab CI test commands or npm/pnpm scripts with a lockfile.
+If there is no match, the wizard starts with `git diff --check`. Add project tests
+when available. Existing saved checks take precedence, and **Use suggested
+checks** replaces the draft when you choose it. Review the commands before saving.
+
+**Agent timeout** defaults to 900 seconds (15 minutes) for each Codex invocation,
+including its tool calls. **Check timeout** defaults to 300 seconds (5 minutes)
+for each configured command, including dependency installation. These limits are
+per invocation or command, so a full job with several stages and rounds can take
+longer. Increase either limit in **Advanced check settings**, up to 3,600 seconds.
+
+New setups default to **Use workspace Git credentials**. The factory asks the
+checkout’s Git credential helper for an HTTPS credential when you test the
+connection or run a job. If your terminal uses an SSH key or the helper cannot
+provide an API token, choose **Use a token environment variable** and set it in
+the process environment before launching setup. Existing selections are preserved.
+The token is kept out of the browser and saved settings. The test contacts the
+Git origin’s HTTPS host and port, or the official GitHub API for `github.com`,
+and checks issue read access. Push and PR/MR permissions are checked when used.
+For a separate API hostname, use an environment token and save unverified.
+Supply `CODEX_API_KEY` separately for Codex runs.
 
 To share settings with teammates, select **Also save a shareable preset** to write
 `.factory-settings.json` in the application root. Review it before committing.

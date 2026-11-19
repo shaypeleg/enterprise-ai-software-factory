@@ -122,7 +122,7 @@ def expand_jobs(repositories, selectors, follow_parent):
         require("." in repositories, "This workspace has no parent Git checkout. Use REPOSITORY=ISSUE.")
         if follow_parent:
             parent = configured(setup_target(repositories, "."))
-            issue = Provider(parent["scm"]).issue(int(selector))
+            issue = Provider(parent["scm"], checkout=parent.get("checkout"), git_url=parent.get("git_url")).issue(int(selector))
             routes = parent_routes(issue.get("body") or "")
             if routes:
                 yield from routes

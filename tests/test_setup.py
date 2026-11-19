@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from factory.config import Refused, load
 from factory.project import configuration_path, detect, discovered_remote
-from factory.scm import SCMHTTPError
+from factory.scm import Provider, SCMHTTPError
 from factory.setup import PRESET, connection_key, initial, install_skill, save, server_for, verify_connection
 
 
@@ -34,6 +34,7 @@ class ProjectSetupTests(unittest.TestCase):
 
     def payload(self):
         config = initial(self.root)["config"]
+        config["scm"]["credential_source"] = "environment"
         config.update(models={"default": "test-model", "security": "security-model"},
                       checks=[["python3", "-m", "unittest"]])
         return {"config": config, "consent": True, "share": True}
@@ -44,6 +45,55 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertEqual(details["scm"]["api_url"], "https://gitlab.example.com/api/v4")
         self.assertEqual(details["base_branch"], "main")
         self.assertEqual(discovered_remote("https://user:secret@github.com/team/app.git"), "")
+
+    def test_suggests_local_ci_checks_and_skips_release_commands(self):
+        (self.root / ".gitignore").write_text(".venv/\n")
+        (self.root / "tests/ci").mkdir(parents=True)
+        (self.root / "scripts/ci").mkdir(parents=True)
+        (self.root / "scripts/ci/requirements.txt").touch()
+        (self.root / "scripts/test_release_config.py").touch()
+        (self.root / ".gitlab-ci.yml").write_text(
+            "checks:\n  image: python:3.12-bookworm\n  script:\n"
+            "    - python -m unittest discover -s tests/ci -v\n"
+            "    - python scripts/test_release_config.py\n"
+            "    - python scripts/publish.py\n")
+        result = initial(self.root)
+        self.assertEqual(result["config"]["checks"], [
+            ["python3.12", "-m", "venv", ".venv"],
+            [".venv/bin/python", "-m", "pip", "install", "-r", "scripts/ci/requirements.txt"],
+            [".venv/bin/python", "-m", "unittest", "discover", "-s", "tests/ci", "-v"],
+            [".venv/bin/python", "scripts/test_release_config.py"],
+        ])
+        self.assertEqual(result["config"]["scm"]["credential_source"], "workspace")
+
+    def test_suggests_locked_node_checks_and_falls_back_without_manifest(self):
+        self.assertEqual(initial(self.root)["config"]["checks"], [["git", "diff", "--check", "HEAD", "--"]])
+        (self.root / "package.json").write_text(json.dumps({"scripts": {
+            "test": 'echo "Error: no test specified" && exit 1', "lint": "eslint .", "deploy": "ship"}}))
+        (self.root / "package-lock.json").write_text("{}")
+        self.assertEqual(initial(self.root)["config"]["checks"], [["npm", "ci"], ["npm", "run", "lint"]])
+
+    def test_workspace_credential_helper_is_used_by_setup_and_the_queue(self):
+        self.git("config", "credential.helper", "")
+        self.git("config", "--add", "credential.helper",
+                 "!f() { test -z \"$CODEX_API_KEY\" && printf 'username=test-user\\npassword=test-token\\n'; }; f")
+        config = initial(self.root)["config"]
+        with patch.dict(os.environ, {"CODEX_API_KEY": "unrelated-token"}), patch("factory.scm.build_opener") as opener:
+            opener.return_value.open.side_effect = [io.BytesIO(b"[]"), io.BytesIO(b"[]")]
+            self.assertEqual(verify_connection(self.root, config), connection_key(config))
+            scm = Provider(config["scm"], checkout=self.root, git_url=config["git_url"])
+            self.assertEqual(scm.queue(), [])
+            for args, _ in opener.return_value.open.call_args_list:
+                self.assertEqual(args[0].get_header("Private-token"), "test-token")
+
+    def test_workspace_credentials_refuse_unrelated_api_host_during_normal_use(self):
+        config = initial(self.root)["config"]
+        config["scm"]["api_url"] = "https://other.example.com/api/v4"
+        with patch("factory.credentials.workspace_credential") as helper:
+            scm = Provider(config["scm"], checkout=self.root, git_url=config["git_url"])
+            with self.assertRaisesRegex(Refused, "only sends tokens"):
+                scm.queue()
+            helper.assert_not_called()
 
     def test_consent_required_and_preset_stays_inert(self):
         payload = self.payload()

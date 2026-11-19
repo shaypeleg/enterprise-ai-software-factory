@@ -1,13 +1,13 @@
 """Small GitHub/GitLab adapters. Intentionally no merge/approve/deploy API."""
 
 import json
-import os
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .config import Refused, require
+from .credentials import repository_credential
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -22,8 +22,9 @@ class SCMHTTPError(Refused):
 
 
 class Provider:
-    def __init__(self, config):
+    def __init__(self, config, *, checkout=None, git_url=None):
         self.config = config
+        self.checkout, self.git_url = checkout, git_url
         self.github = config["provider"] == "github"
         self.root = config["api_url"].rstrip("/")
         repository = config["repository"]
@@ -32,8 +33,7 @@ class Provider:
         self.opener = build_opener(NoRedirect())
 
     def request(self, method, path, data=None, *, attempts=3, timeout=20):
-        token = os.environ.get(self.config["token_env"])
-        require(token, "missing SCM token in " + self.config["token_env"])
+        _, token = repository_credential(self.config, self.checkout, self.git_url)
         headers = {"Accept": "application/json", "User-Agent": "codex-factory-pilot/1"}
         headers.update({"Authorization": "Bearer " + token} if self.github else {"PRIVATE-TOKEN": token})
         if data is not None:

@@ -27,7 +27,10 @@ def validate_scm(scm):
         url.username or url.password or url.query or url.fragment
     ), "api_url must be HTTPS without credentials, query, or fragment")
     require(url.port != 0, "api_url must use a valid HTTPS port")
-    require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", scm["token_env"]), "invalid token_env")
+    source = scm.get("credential_source", "environment")
+    require(source in ("workspace", "environment"), "invalid credential source")
+    if source == "environment":
+        require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", scm["token_env"]), "invalid token_env")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", scm["repository"]),
             "repository must be an explicit owner/project or group/subgroup/project")
     require(all(part not in (".", "..") for part in scm["repository"].split("/")),

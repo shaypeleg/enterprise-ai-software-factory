@@ -18,7 +18,7 @@ const roles = {
   handoff: ['Handoff', 'Summarize evidence for review'],
 };
 const fields = ['git_url', 'base_branch'];
-const scmFields = ['provider', 'api_url', 'repository', 'token_env', 'queue_label'];
+const scmFields = ['provider', 'api_url', 'repository', 'credential_source', 'token_env', 'queue_label'];
 const limits = ['max_rounds', 'check_timeout_seconds', 'agent_timeout_seconds'];
 const testButton = element('test-connection');
 const allowUnverified = element('allow-unverified');
@@ -86,6 +86,16 @@ function describeAccess() {
     : 'Use a project-scoped GitLab credential. Reading requires API access. Publishing additionally needs API write access and permission to push candidate branches.';
 }
 
+function describeCredentialSource() {
+  const useVariable = element('credential_source').value === 'environment';
+  element('token-variable').hidden = !useVariable;
+  element('token_env').disabled = !useVariable;
+  element('token_env').required = useVariable;
+  element('credential-help').textContent = useVariable
+    ? 'Set the variable before launching setup. The test reads one page of issues. The token stays out of the browser.'
+    : 'Use the HTTPS token already stored by your Git credential helper. If Git uses an SSH key only, choose a token environment variable. The token stays out of the browser.';
+}
+
 function providerChanged() {
   const provider = element('provider').value;
   if (!provider) return;
@@ -151,7 +161,7 @@ function setBusy(flag) {
 }
 
 testButton.addEventListener('click', async () => {
-  if (!element('token_env').reportValidity()) return;
+  if (element('credential_source').value === 'environment' && !element('token_env').reportValidity()) return;
   const payload = JSON.stringify(connection());
   setBusy(true);
   connectionStatus('Checking authenticated issue access…');
@@ -171,6 +181,10 @@ for (const key of ['git_url', 'api_url', 'repository', 'token_env']) {
   element(key).addEventListener('input', invalidateConnection);
 }
 allowUnverified.addEventListener('change', updateActions);
+element('use-suggested-checks').addEventListener('click', () => {
+  element('checks').value = JSON.stringify(settings.suggestedChecks, null, 2);
+  element('checks-suggestion').textContent = settings.suggestedChecksHint;
+});
 
 form.noValidate = true;
 form.addEventListener('submit', async (event) => {
@@ -218,6 +232,10 @@ form.addEventListener('submit', async (event) => {
 
 element('back').addEventListener('click', () => { notice(''); showStep(step - 1); });
 element('provider').addEventListener('change', providerChanged);
+element('credential_source').addEventListener('change', () => {
+  describeCredentialSource();
+  invalidateConnection();
+});
 
 function repositoryLabel(alias, state) {
   return `${alias === '.' ? 'Parent repository' : alias} · ${state}`;
@@ -253,8 +271,10 @@ async function loadRepository() {
     element('origin-hint').textContent = settings.originHint;
     for (const key of fields) element(key).value = config[key] ?? '';
     for (const key of scmFields) element(key).value = config.scm[key] ?? '';
+    element('credential_source').value = config.scm.credential_source ?? 'environment';
     for (const key of limits) element(key).value = config[key];
     element('checks').value = config.checks.length ? JSON.stringify(config.checks, null, 2) : '';
+    element('checks-suggestion').textContent = settings.checksHint;
     element('protected_paths').value = config.protected_paths.join('\n');
     element('roles').replaceChildren();
     buildRoleInputs(config.models, settings.roles);
@@ -262,6 +282,7 @@ async function loadRepository() {
     element('share').checked = false;
     invalidateConnection();
     describeAccess();
+    describeCredentialSource();
     notice(settings.presetMessage, true);
     showStep(0, false);
     form.hidden = false;

@@ -12,7 +12,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from .check_defaults import suggest
 from .config import Refused, load, require, validate, validate_git_url, validate_scm
+from .credentials import require_api_origin
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
 from .scm import Provider, SCMHTTPError
@@ -108,11 +110,15 @@ def initial(root):
     info = detect(root)
     defaults = json.loads((SOURCE / "config.example.json").read_text())
     defaults.update({key: info[key] for key in ("checkout", "git_url", "base_branch", "scm")})
-    defaults.update(models={"default": ""}, checks=[])
+    defaults["scm"]["credential_source"] = "workspace"
+    checks, suggested_checks_hint = suggest(root)
+    checks_hint = suggested_checks_hint
+    defaults.update(models={"default": ""}, checks=checks)
     path = configuration_path(root)
     message = ""
     if path.is_file():
         defaults = load(path)
+        checks_hint = "Using the checks already saved for this checkout."
     else:
         try:
             preset = preset_path(root)
@@ -124,45 +130,50 @@ def initial(root):
                 candidate["state_dir"] = str(state_path(root, "preview"))
                 validate(candidate, path)
                 defaults = candidate
+                if "checks" in stored:
+                    checks_hint = "Using the checks from the project preset. Review them before saving."
                 message = "Loaded the project preset. Review its endpoints and every check command before saving."
         except (Refused, OSError, ValueError, TypeError, AttributeError, KeyError):
             message = "The project preset could not be loaded. Review or replace it from this wizard."
     return {"config": {key: defaults[key] for key in PORTABLE}, "project": str(root),
             "origin": info["git_url"], "originHint": info["origin_hint"],
-            "presetMessage": message, "hasConfig": path.is_file(), "roles": list(ROLES)}
+            "presetMessage": message, "hasConfig": path.is_file(), "roles": list(ROLES),
+            "checksHint": checks_hint, "suggestedChecks": checks, "suggestedChecksHint": suggested_checks_hint}
 
 
 def connection_key(config):
     scm = config["scm"]
     return (config["git_url"], scm["provider"], scm["api_url"].rstrip("/"),
-            scm["repository"], scm["token_env"])
+            scm["repository"], scm.get("credential_source", "environment"), scm.get("token_env"))
 
 
 def check_clone(root, git_url, scm):
     require(git_url == detect(root)["git_url"],
             "The clone URL must match the detected Git origin (or its HTTPS equivalent).")
-    require(scm["token_env"] not in ("CODEX_API_KEY", "OPENAI_API_KEY"),
+    require(scm.get("token_env") not in ("CODEX_API_KEY", "OPENAI_API_KEY"),
             "Use separate environment variables for Git credentials and OpenAI credentials.")
 
 
+def selected_scm(scm):
+    selected = {key: scm[key] for key in SCM_FIELDS}
+    source = scm.get("credential_source", "environment")
+    if source != "environment":
+        selected["credential_source"] = source
+    return selected
+
+
 def verify_connection(root, config):
-    scm = {key: config["scm"][key] for key in SCM_FIELDS}
+    scm = selected_scm(config["scm"])
     git_url = config["git_url"]
     validate_scm(scm)
     validate_git_url(git_url, scm["repository"])
     check_clone(root, git_url, scm)
-    endpoint, clone = urlsplit(scm["api_url"]), urlsplit(git_url)
-    endpoint_host = (endpoint.hostname, endpoint.port or 443)
-    clone_host = (clone.hostname, clone.port or 443)
-    trusted_host = (("api.github.com", 443)
-                    if scm["provider"] == "github" and clone_host == ("github.com", 443)
-                    else clone_host)
-    require(endpoint_host == trusted_host,
-            "The connection test only sends tokens to the Git origin’s host or the official GitHub API.")
-    require(os.environ.get(scm["token_env"]),
-            f"{scm['token_env']} is missing. Set it in the launch environment, then reopen setup.")
+    require_api_origin(scm, git_url)
+    if scm.get("credential_source", "environment") == "environment":
+        require(os.environ.get(scm["token_env"]),
+                f"{scm['token_env']} is missing. Set it in the launch environment, then reopen setup.")
     try:
-        Provider(scm).test_issue_access()
+        Provider(scm, checkout=root, git_url=git_url).test_issue_access()
     except SCMHTTPError as error:
         explanations = {
             401: "The server rejected the token. Check that it is valid and belongs to this Git host.",
@@ -180,7 +191,7 @@ def verify_connection(root, config):
 def save(root, data):
     require(isinstance(data, dict) and data.get("consent") is True, "Confirm project access before saving.")
     config = {key: data["config"][key] for key in PORTABLE}
-    config["scm"] = {key: config["scm"][key] for key in SCM_FIELDS}
+    config["scm"] = selected_scm(config["scm"])
     require(set(config["models"]).issubset({"default", *ROLES}), "Unknown model role.")
     config.update(execution_mode="local-pilot", checkout=str(root),
                   state_dir=str(state_path(root, secrets.token_hex(8))),

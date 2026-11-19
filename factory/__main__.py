@@ -15,7 +15,7 @@ from .workspace import configured, discover, select_jobs, setup_target, workspac
 
 
 def operate(config, command, issue=None, publish=False):
-    provider = Provider(config["scm"])
+    provider = Provider(config["scm"], checkout=config["checkout"], git_url=config["git_url"])
     if command == "queue":
         return provider.queue()
     with State(config) as state:

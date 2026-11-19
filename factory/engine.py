@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import Refused, require
+from .credentials import repository_credential
 from .project import discovered_remote
 from .runtime import clean_env, execute
 
@@ -93,9 +94,7 @@ class Engine:
             if index_file:
                 env["GIT_INDEX_FILE"] = str(index_file)
             if authenticate:
-                token = os.environ.get(self.config["scm"]["token_env"])
-                require(token, "missing SCM token")
-                user = "x-access-token" if self.config["scm"]["provider"] == "github" else "oauth2"
+                user, token = repository_credential(self.config["scm"], self.checkout, self.config["git_url"])
                 basic = base64.b64encode((user + ":" + token).encode()).decode()
                 env.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
                             "GIT_CONFIG_VALUE_0": "Authorization: Basic " + basic})
