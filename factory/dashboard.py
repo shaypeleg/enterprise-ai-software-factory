@@ -1,0 +1,155 @@
+"""Read-only views of recorded factory runs in the current project or workspace."""
+
+import json
+import sqlite3
+import webbrowser
+from contextlib import closing
+from http.server import HTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from .config import Refused, load
+from .local_ui import LocalHandler, private_url
+
+
+ASSETS = Path(__file__).resolve().with_name("dashboard_ui")
+ROLES = ("intake", "spec", "build", "gate", "code", "security", "ux", "ui", "handoff")
+
+
+def database(settings):
+    if settings is None or not settings.is_file():
+        return None
+    path = Path(load(settings)["state_dir"]) / "state.sqlite3"
+    return path if path.is_file() else None
+
+
+def summarize(job, when=None, last_event=None):
+    issue = job["issue"]
+    return {"number": issue["number"], "title": issue["title"], "issue_url": issue.get("url"),
+            "request_url": job.get("request_url"), "stage": job["stage"], "round": job["round"],
+            "risk": job["results"].get("intake", {}).get("risk"), "updated": when, "last_event": last_event}
+
+
+def open_reader(path):
+    return sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)
+
+
+def list_runs(settings):
+    path = database(settings)
+    if not path:
+        return []
+    with closing(open_reader(path)) as reader:
+        rows = reader.execute("""
+            WITH latest AS (SELECT job, MAX(sequence) AS seq FROM events GROUP BY job)
+            SELECT jobs.value, events.at, events.event
+            FROM jobs LEFT JOIN latest ON latest.job = jobs.id
+            LEFT JOIN events ON events.sequence = latest.seq
+            ORDER BY latest.seq DESC, jobs.id DESC LIMIT 200
+        """)
+        return [summarize(json.loads(raw), when, event) for raw, when, event in rows]
+
+
+def run_detail(settings, number):
+    path = database(settings)
+    if not path:
+        return None
+    with closing(open_reader(path)) as reader:
+        reader.execute("BEGIN")
+        row = reader.execute("SELECT value FROM jobs WHERE id=?", (number,)).fetchone()
+        if row is None:
+            return None
+        job = json.loads(row[0])
+        created = reader.execute("SELECT at FROM events WHERE job=? ORDER BY sequence LIMIT 1", (number,)).fetchone()
+        events = reader.execute("""
+            SELECT at, event, value FROM (
+                SELECT sequence, at, event, value FROM events
+                WHERE job=? ORDER BY sequence DESC LIMIT 300
+            ) ORDER BY sequence
+        """, (number,))
+        attempts, timeline = recorded_results(events)
+    latest = timeline[-1] if timeline else {}
+    return {"job": summarize(job, latest.get("at"), latest.get("event")),
+            "started": created[0] if created else None, "rounds": attempts, "events": timeline}
+
+
+def recorded_results(events):
+    attempts = {}
+    timeline = []
+    previous = None
+    for at, event, raw in events:
+        snapshot = json.loads(raw)
+        stage, round_number = snapshot["stage"], snapshot["round"]
+        role = event.removeprefix("stage-") if event.startswith("stage-") else None
+        if event == "gate-pass":
+            role = "gate"
+        result = snapshot["results"].get(role) if role in ROLES else None
+        if result:
+            attempts.setdefault(round_number, {})[role] = {
+                "verdict": result.get("verdict"), "report": (result.get("report") or "")[:12000],
+            }
+        if event == "revision-required" and previous and previous[0] == "gate":
+            attempts.setdefault(previous[1], {})["gate"] = {
+                "verdict": "FAIL", "report": (snapshot["results"].get("feedback") or "")[:12000],
+            }
+        timeline.append({"at": at, "event": event, "stage": stage, "round": round_number})
+        previous = (stage, round_number)
+    return attempts, timeline
+
+
+def server_for(project, repositories):
+    class Handler(LocalHandler):
+        def do_GET(self):
+            if not self.valid_host():
+                return self.reply(403, {"error": "Invalid dashboard host."})
+            url = urlsplit(self.path)
+            if url.path == "/theme.css":
+                return self.asset("/style.css", ASSETS.with_name("setup_ui"))
+            if not url.path.startswith("/api/"):
+                return self.asset(url.path, ASSETS)
+            if not self.authorized():
+                return self.reply(403, {"error": "Open the private dashboard URL printed in your terminal."})
+            if url.path == "/api/runs":
+                payload = []
+                for name, settings in repositories.items():
+                    status = "configured" if settings and settings.is_file() else "setup-required"
+                    try:
+                        runs = list_runs(settings)
+                    except (sqlite3.Error, OSError, ValueError, KeyError, Refused):
+                        status, runs = "unavailable", []
+                    payload.append({"name": name, "status": status, "runs": runs})
+                return self.reply(200, {"project": project, "repositories": payload})
+            if url.path == "/api/run":
+                fields = parse_qs(url.query)
+                try:
+                    name, = fields["repository"]
+                    value, = fields["issue"]
+                    number = int(value)
+                    if number <= 0 or number > 2**63 - 1:
+                        raise ValueError
+                    detail = run_detail(repositories[name], number)
+                except (KeyError, ValueError):
+                    return self.reply(404, {"error": "Run not found in this workspace."})
+                except (sqlite3.Error, OSError, Refused):
+                    return self.reply(503, {"error": "The run could not be read. Try again shortly."})
+                if detail is None:
+                    return self.reply(404, {"error": "Run not found in this workspace."})
+                return self.reply(200, detail)
+            return self.reply(404, {"error": "Page unavailable."})
+
+        def do_POST(self):
+            return self.reply(405, {"error": "The dashboard is read-only."})
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    return server, private_url(server)
+
+
+def serve_dashboard(project, repositories, open_browser=True):
+    server, url = server_for(project, repositories)
+    with server:
+        print(f"Open factory dashboard: {url}", flush=True)
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass

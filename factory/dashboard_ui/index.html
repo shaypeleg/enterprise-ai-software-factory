@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Factory run dashboard</title>
+  <link rel="stylesheet" href="/theme.css">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true"></span> Factory</div><span class="local">Local dashboard</span></header>
+  <main class="dash">
+    <header class="dash-heading">
+      <div><h1>Factory runs</h1><p id="project" class="muted">Follow job progress in this checkout.</p></div>
+      <p id="connection" role="status" class="connection">Connecting…</p>
+    </header>
+    <p id="message" role="alert" class="notice" hidden></p>
+    <div class="run-layout">
+      <section class="run-list" aria-labelledby="list-title">
+        <div class="list-head"><h2 id="list-title">Runs</h2><span id="count" class="muted"></span></div>
+        <label id="repository-filter" hidden>Repository<select id="repository"><option value="">All repositories</option></select></label>
+        <ul id="runs" class="runs" aria-label="Recorded runs"></ul>
+        <p id="empty" class="empty muted">Loading recorded runs…</p>
+      </section>
+      <section class="run-details" aria-labelledby="run-title">
+        <h2 id="run-title" tabindex="-1">Run details</h2>
+        <div id="detail"><p class="muted">Select a run to inspect its progress and review results.</p></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

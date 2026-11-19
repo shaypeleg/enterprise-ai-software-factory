@@ -1,20 +1,20 @@
 """Local browser setup and project skill installation."""
 
 import hashlib
-import hmac
 import json
 import os
 import secrets
 import tempfile
 import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .check_defaults import suggest
 from .config import Refused, load, require, validate, validate_git_url, validate_scm
 from .credentials import require_api_origin
+from .local_ui import ASSETS as BROWSER_ASSETS, LocalHandler, private_url
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
 from .scm import Provider, SCMHTTPError
@@ -38,7 +38,8 @@ def managed_bundle(directory):
     """Keep an immutable copy independent of the temporary npm package cache."""
     paths = [SOURCE / name for name in ("config.example.json", "LICENSE", "NOTICE")]
     paths.extend((SOURCE / "factory").glob("*.py"))
-    paths.extend(ASSETS / name for name in ("index.html", "style.css", "app.js"))
+    for surface in (ASSETS, ASSETS.with_name("dashboard_ui")):
+        paths.extend(surface / filename for filename, _ in BROWSER_ASSETS.values())
     paths.extend(path for path in (SOURCE / "skills" / "factory").rglob("*")
                  if path.is_file() and "__pycache__" not in path.parts)
     files = [(path.relative_to(SOURCE), path.read_bytes()) for path in sorted(paths)]
@@ -224,35 +225,7 @@ def save(root, data):
 
 
 def server_for(root, repositories=None):
-    token = secrets.token_urlsafe(32)
-
-    class Handler(BaseHTTPRequestHandler):
-        timeout = 5
-
-        def log_message(self, *args):
-            pass  # Do not log requests or capability URLs.
-
-        def reply(self, status, data, kind="application/json; charset=utf-8"):
-            if not isinstance(data, bytes):
-                data = json.dumps(data).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Referrer-Policy", "no-referrer")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; "
-                             "style-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
-                             "base-uri 'none'; form-action 'none'")
-            self.end_headers()
-            self.wfile.write(data)
-
-        def authorized(self):
-            return hmac.compare_digest(self.headers.get("X-Factory-Session", "").encode(), token.encode())
-
-        def valid_host(self):
-            return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
-
+    class Handler(LocalHandler):
         def selected_repository(self, query):
             selections = parse_qs(query).get("repository", [])
             if selections:
@@ -277,12 +250,7 @@ def server_for(root, repositories=None):
                     return self.reply(200, result)
                 except (Refused, OSError, ValueError):
                     return self.reply(400, {"error": "Existing settings could not be loaded. Check the local configuration."})
-            assets = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
-                      "/style.css": ("style.css", "text/css")}
-            if self.path in assets:
-                name, kind = assets[self.path]
-                return self.reply(200, (ASSETS / name).read_bytes(), kind + "; charset=utf-8")
-            self.reply(404, {"error": "Setup page unavailable."})
+            return self.asset(url.path, ASSETS)
 
         def do_POST(self):
             url = urlsplit(self.path)
@@ -325,7 +293,7 @@ def server_for(root, repositories=None):
     server.saved = False
     server.configured = set()
     server.verified = {}
-    return server, f"http://127.0.0.1:{server.server_port}/#{token}"
+    return server, private_url(server)
 
 
 def serve(root, open_browser=True, repositories=None):

@@ -1,6 +1,6 @@
 interface:
   display_name: Factory
-  short_description: Configure and run the project’s software factory
+  short_description: Run the project’s factory and watch live progress
   default_prompt: "$factory status"
 policy:
   allow_implicit_invocation: false

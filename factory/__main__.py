@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .config import Refused, load, require
+from .dashboard import serve_dashboard
 from .engine import Engine, State
 from .project import configuration_path, project_root
 from .runtime import Codex
@@ -46,6 +47,10 @@ def workspace_command(args):
         selected = args.repository or next(alias for alias, path in repositories.items() if path is not None)
         serve(setup_target(repositories, selected), open_browser=not args.no_browser,
               repositories=repositories)
+        return
+    if action == "dashboard":
+        settings = {alias: configuration_path(path) if path else None for alias, path in repositories.items()}
+        serve_dashboard(root.name, settings, open_browser=not args.no_browser)
         return
     if action == "list":
         report({alias: {"checkout": str(path) if path else None,
@@ -96,7 +101,8 @@ def main():
     parser.add_argument("--config", help="override the current project’s private configuration")
     parser.add_argument("--project", type=Path, default=Path.cwd(), help="target Git checkout (default: current directory)")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("install", "setup"):
+    commands.add_parser("help", help="explain setup, the job workflow, and publishing")
+    for name in ("install", "setup", "dashboard"):
         command = commands.add_parser(name)
         command.add_argument("--no-browser", action="store_true", help="print the private URL without opening it")
         if name == "install":
@@ -114,6 +120,7 @@ def main():
     actions = workspace.add_subparsers(dest="action", required=True)
     for action in ("list", "queue", "status"):
         actions.add_parser(action)
+    actions.add_parser("dashboard").add_argument("--no-browser", action="store_true")
     setup = actions.add_parser("setup")
     setup.add_argument("repository", nargs="?")
     setup.add_argument("--no-browser", action="store_true")
@@ -123,6 +130,10 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     try:
+        if args.command == "help":
+            guide = Path(__file__).resolve().parents[1] / "skills" / "factory" / "HELP.md"
+            print(guide.read_text(encoding="utf-8"), end="")
+            return
         if args.command == "workspace":
             require(not args.config, "Workspace commands use each checkout’s saved configuration.")
             workspace_command(args)
@@ -144,6 +155,11 @@ def main():
                 if args.skip_setup:
                     return
             serve(selected, open_browser=not args.no_browser, repositories=repositories)
+            return
+        if args.command == "dashboard":
+            root = project_root(args.project)
+            settings = Path(args.config).resolve() if args.config else configuration_path(root)
+            serve_dashboard(root.name, {root.name: settings}, open_browser=not args.no_browser)
             return
         path = Path(args.config) if args.config else configuration_path(project_root(args.project))
         if not path.is_file():

@@ -2,6 +2,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from email.message import Message
@@ -191,6 +192,14 @@ class ProjectSetupTests(unittest.TestCase):
                                 capture_output=True, text=True, check=True)
         self.assertIn("setup", result.stdout)
         self.assertEqual(install_skill(self.root, managed=True).resolve(), skill.resolve())
+
+    def test_installed_help_works_outside_git_without_configuration(self):
+        skill = install_skill(self.root, managed=True)
+        result = subprocess.run([sys.executable, str(skill / "launch.py"), "help"], cwd=self.root.parent,
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, (skill / "HELP.md").read_text(encoding="utf-8"))
+        self.assertFalse(Path(os.environ["XDG_CONFIG_HOME"]).exists())
+        self.assertFalse(Path(os.environ["XDG_STATE_HOME"]).exists())
 
     def test_cannot_save_a_different_target_or_use_model_token_for_scm(self):
         payload = self.payload()

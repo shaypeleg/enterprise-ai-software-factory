@@ -177,12 +177,17 @@ command. If the skill picker has not refreshed, reopen the project or restart Co
 See the [Codex skill documentation](https://learn.chatgpt.com/docs/build-skills).
 
 ```text
+$factory help
 $factory setup
 $factory queue
 $factory status
+$factory dashboard
 $factory run 42
 $factory publish 42
 ```
+
+Use `$factory help` before or after setup to see how jobs, the dashboard, and
+publishing work. [Factory help](skills/factory/HELP.md)
 
 Replace `42` with an open issue carrying the configured label. `run` prepares a
 local candidate. `publish` opens a draft PR/MR for a passing candidate. You can
@@ -193,6 +198,20 @@ For direct CLI use, run `python3 -m factory --project /path/to/application valid
 from the factory checkout. The existing `--config /path/to/config.json` option is
 available for operator-managed, out-of-tree configuration using
 [`config.example.json`](config.example.json).
+
+## Watch runs in the browser
+
+Open `$factory dashboard` for the current checkout or `$factory workspace dashboard`
+for all configured checkouts. The local page refreshes every two seconds while
+the dashboard command is running. It shows each issue’s stage, round, recorded
+checks and reviews, recent activity, and draft PR/MR link when available. It reads
+the job database alongside the worker and requires no additional API credentials.
+
+Start the dashboard before or during a run. In a terminal from the target project,
+use `python3 .agents/skills/factory/launch.py dashboard` (or `workspace dashboard`).
+Keep that command running and start the job from Codex or another terminal. Use
+`--no-browser` to print the private URL, and `Ctrl+C` in the dashboard terminal
+to close it. The dashboard is read-only and displays jobs from the current saved configuration.
 
 The `release_intent` output identifies staging and the exact commit for a future
 trusted deployment adapter. It is **unsigned advisory data, not deployment authorization**.

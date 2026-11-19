@@ -13,6 +13,7 @@
     "config.example.json",
     "factory/**/*.py",
     "factory/setup_ui/*",
+    "factory/dashboard_ui/*",
     "skills/factory/**",
     "NOTICE"
   ],

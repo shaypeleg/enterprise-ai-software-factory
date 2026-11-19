@@ -1,0 +1,58 @@
+.dash { max-width: 1232px; padding: 34px 24px 56px; margin: 0 auto; }
+.dash-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-bottom: 19px; border-bottom: 1px solid var(--line); }
+.dash-heading h1 { font-size: 2.9rem; margin: 0 0 6px; }
+.dash-heading p { margin: 0; overflow-wrap: anywhere; }
+.connection { color: var(--accent); font-size: .84rem; font-weight: 700; padding: 7px 10px; border: 1px solid var(--line); background: var(--bright); white-space: nowrap; }
+.connection.stale { color: var(--danger); background: var(--surface); }
+.run-layout { display: grid; grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: 32px; }
+.run-list { border-right: 1px solid var(--line); padding: 22px 19px 12px 0; }
+.list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.list-head h2, .run-details h2 { margin: 0; font-size: 1.25rem; line-height: 1.3; }
+.list-head #count { font: .82rem/1 ui-monospace, monospace; }
+#repository-filter { margin-top: 13px; }
+.runs, .milestones, .history { list-style: none; padding: 0; margin: 0; }
+.runs { margin-top: 12px; border-top: 1px solid var(--line); }
+.runs:empty { display: none; }
+.runs li { border-bottom: 1px solid var(--line); }
+.run-link { display: block; width: 100%; border: 0; border-radius: 0; background: transparent; color: var(--ink); padding: 12px 9px; text-align: left; overflow-wrap: anywhere; }
+.run-link:hover { background: var(--surface); }
+.run-link[aria-pressed="true"] { background: var(--bright); color: var(--accent); }
+.run-link small, .run-meta, .history time { font-size: .78rem; color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.run-link small { display: block; margin-bottom: 3px; }
+.run-link strong { display: block; font-size: .95rem; }
+.run-link .run-meta { display: block; margin-top: 5px; }
+.run-details { min-width: 0; padding-top: 22px; }
+.run-details h2 { font-size: 1.5rem; overflow-wrap: anywhere; }
+.run-meta { margin: 7px 0 11px; font-size: .86rem; }
+.links { display: flex; flex-wrap: wrap; gap: 7px 15px; margin: 8px 0 16px; }
+.links a { color: var(--accent); text-underline-offset: .2em; font-size: .88rem; }
+.milestones { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 20px 0 11px; }
+.milestones li { display: block; border-top: 3px solid var(--line); padding-top: 6px; color: var(--muted); font-size: .76rem; }
+.milestones li.complete { border-color: #639075; color: var(--accent); }
+.milestones li[aria-current="step"] { border-color: var(--accent); color: var(--accent); font-weight: 750; }
+.evidence { margin-top: 19px; }
+.evidence h3 { margin: 0 0 9px; font-size: 1rem; }
+.evidence details { margin: 0; border-top: 0; border-bottom: 1px solid var(--line); }
+.rounds { border-top: 1px solid var(--line); }
+.rounds details > summary { font-size: .88rem; }
+.rounds h4 { font-size: .83rem; margin: 13px 0 3px; }
+.rounds pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .84rem; margin: 0; color: var(--muted); }
+.verdicts { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; padding: 0; list-style: none; }
+.verdicts li { border: 1px solid var(--line); padding: 2px 7px; background: var(--surface); font-size: .78rem; }
+.verdicts .good { color: var(--accent); background: var(--bright); }
+.verdicts .attention { color: var(--danger); }
+.history li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--line); padding: 7px 0; font-size: .85rem; }
+.history time { flex-shrink: 0; }
+.empty { font-size: .89rem; max-width: 44ch; }
+@media (max-width: 720px) {
+  .dash { padding-top: 24px; }
+  .dash-heading { align-items: flex-start; flex-direction: column; gap: 11px; }
+  .dash-heading h1 { font-size: 2.15rem; }
+  .run-layout { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .run-list { border-right: 0; padding: 17px 0; }
+  .run-details { border-top: 1px solid var(--line); padding-top: 18px; }
+}
+@media (max-width: 390px) {
+  .milestones { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 5px; }
+  .history li { flex-wrap: wrap; gap: 2px 8px; }
+}
