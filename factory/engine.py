@@ -92,8 +92,8 @@ class Engine:
         self.config, self.state, self.provider, self.runtime = config, state, provider, runtime
         self.checkout = Path(config["checkout"])
 
-    def git(self, cwd, *args, authenticate=False, check=True, index_file=None):
-        # Ignore global/system Git credentials and hooks. Only publisher/fetch receives SCM auth.
+    def git(self, cwd, *args, authenticate=False, ssh=False, check=True, index_file=None):
+        # Ignore global/system Git credentials and hooks. Only network operations receive auth.
         with tempfile.TemporaryDirectory(prefix="git-", dir=self.state.root) as home:
             env = clean_env(home)
             env.update({"GIT_AUTHOR_NAME": "Codex factory", "GIT_AUTHOR_EMAIL": "factory@localhost",
@@ -105,6 +105,11 @@ class Engine:
                 basic = base64.b64encode((user + ":" + token).encode()).decode()
                 env.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
                             "GIT_CONFIG_VALUE_0": "Authorization: Basic " + basic})
+            elif ssh:
+                env.update(GIT_SSH_VARIANT="ssh",
+                           GIT_SSH_COMMAND="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ForwardAgent=no")
+                if os.environ.get("SSH_AUTH_SOCK"):
+                    env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
             argv = ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                     "-c", "credential.helper=", "-c", "commit.gpgsign=false",
                     "-c", "http.followRedirects=false", *args]
@@ -124,15 +129,22 @@ class Engine:
         rewrites = self.git(self.checkout, "config", "--includes", "--local", "--get-regexp",
                             r"^(url\.|http\.|core\.sshcommand)", check=False)
         require(rewrites.returncode == 1, "remove local Git URL/HTTP/SSH overrides for this pilot")
+        return remote
 
     def path(self, job):
         return self.state.root / "worktrees" / str(job["issue"]["number"])
 
-    def prepare(self, job):
+    def prepare(self, job, origin):
         worktree = self.path(job)
         if not job.get("base"):
-            self.git(self.checkout, "fetch", "--no-tags", self.config["git_url"],
-                     self.config["base_branch"], authenticate=True)
+            use_ssh = (self.config["scm"].get("credential_source") == "workspace"
+                       and not origin.lower().startswith("https://"))
+            if use_ssh:
+                self.git(self.checkout, "fetch", "--no-tags", "--no-recurse-submodules",
+                         origin, self.config["base_branch"], ssh=True)
+            else:
+                self.git(self.checkout, "fetch", "--no-tags", self.config["git_url"],
+                         self.config["base_branch"], authenticate=True)
             job["base"] = self.git(self.checkout, "rev-parse", "FETCH_HEAD").stdout.decode().strip()
             self.state.save(job, "base-pinned")
         if not worktree.exists():
@@ -278,7 +290,7 @@ class Engine:
         self.state.save(job, "revision-required")
 
     def run(self, number):
-        self.verify_checkout()
+        origin = self.verify_checkout()
         current = self.provider.issue(number)  # Recheck open/label before any resumed work.
         job = self.state.get(number)
         if not job:
@@ -288,7 +300,7 @@ class Engine:
         if job["stage"] in STOP:
             return job
         require(current == job["issue"], "issue changed; inspect it and use a fresh state_dir")
-        self.prepare(job)
+        self.prepare(job, origin)
         try:
             while job["stage"] not in STOP:
                 stage = job["stage"]

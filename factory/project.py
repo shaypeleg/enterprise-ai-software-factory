@@ -74,7 +74,7 @@ def detect(root):
                     "repository": url.path.strip("/").removesuffix(".git"),
                     "token_env": ("FACTORY_" + provider.upper() + "_TOKEN") if provider else "",
                     "queue_label": "factory:ready"},
-            "origin_hint": ("SSH origin detected. The factory will use HTTPS for the same project."
+            "origin_hint": ("SSH origin detected. Workspace credentials use SSH to fetch the base branch."
                             if git_url and not remote.startswith("https://") else
                             "Detected from Git origin." if git_url else
                             "No usable origin found. Configure a credential-free Git origin to run the factory.")}

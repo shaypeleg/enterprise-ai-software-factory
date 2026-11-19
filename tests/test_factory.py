@@ -104,6 +104,39 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), b"Authorization: Basic " +
                          base64.b64encode(b"fixture-user:fixture-token"))
 
+    def test_base_fetch_uses_ssh_only_for_workspace_credentials_with_ssh_origin(self):
+        ssh_origin = "git@example.com:team/app.git"
+        for origin, source, expected in (
+            (ssh_origin, "workspace", ("--no-recurse-submodules", ssh_origin)),
+            (ssh_origin, "environment", (self.config["git_url"],)),
+            (self.config["git_url"], "workspace", (self.config["git_url"],)),
+        ):
+            with self.subTest(origin=origin, source=source):
+                git(self.repo, "remote", "set-url", "origin", origin)
+                self.config["scm"]["credential_source"] = source
+                verified = self.engine.verify_checkout()
+                job = self.state.get(7)
+                del job["base"]
+                with patch.object(self.engine, "git") as command:
+                    command.return_value.stdout = self.base.encode()
+                    command.return_value.returncode = 0
+                    self.engine.prepare(job, verified)
+                flags = {"ssh": True} if len(expected) == 2 else {"authenticate": True}
+                command.assert_any_call(self.repo, "fetch", "--no-tags", *expected, "main", **flags)
+                self.assertEqual(job["base"], self.base)
+
+    def test_ssh_fetch_passes_only_the_ssh_socket_to_git(self):
+        with (patch.dict(os.environ, {"SSH_AUTH_SOCK": "/example/agent", "CODEX_API_KEY": "test-key"}),
+              patch("factory.engine.subprocess.run") as command):
+            command.return_value.returncode = 0
+            self.engine.git(self.repo, "fetch", "git@example.com:team/app.git", "main", ssh=True)
+        env = command.call_args.kwargs["env"]
+        self.assertEqual(env["SSH_AUTH_SOCK"], "/example/agent")
+        self.assertIn("StrictHostKeyChecking=yes", env["GIT_SSH_COMMAND"])
+        self.assertIn("ForwardAgent=no", env["GIT_SSH_COMMAND"])
+        self.assertNotIn("GIT_CONFIG_VALUE_0", env)
+        self.assertNotIn("CODEX_API_KEY", env)
+
     def test_parent_candidate_preserves_unchanged_submodule_pointer(self):
         git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{self.base},backend")
         git(self.repo, "commit", "-m", "Pin backend")
@@ -179,7 +212,7 @@ class EngineTests(unittest.TestCase):
 
     def test_protected_addition_and_deletion_are_blocked(self):
         job = self.state.get(7)
-        self.engine.prepare(job)
+        self.engine.prepare(job, self.engine.verify_checkout())
         root = self.engine.path(job)
         (root / ".github").mkdir()
         (root / ".github" / "new.yml").write_text("unsafe")

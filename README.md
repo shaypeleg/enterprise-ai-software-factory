@@ -149,9 +149,11 @@ release is published. A push to `main` alone does not publish a release.
 The wizard shows the full delivery workflow, including the future staging and
 production CI steps. It detects the application's Git origin, suggests the
 repository and branch, and lets you select GitHub or GitLab and edit the API
-endpoint. For HTTPS, use the exact origin URL. For SSH, the factory uses the
-HTTPS equivalent for Git operations. Self-managed hosts that cannot be identified
-by name need an explicit provider selection.
+endpoint. Keep the HTTPS clone URL set to the HTTPS equivalent of your origin.
+With workspace credentials and an SSH origin, the factory fetches the job's
+base branch over SSH using your existing SSH setup. Issue access and publishing
+still use HTTPS. Self-managed hosts that cannot be identified by name need an
+explicit provider selection.
 
 Choose a default OpenAI model ID and optionally override it for each role. Use
 IDs available to your OpenAI API project. New setups suggest checks from
