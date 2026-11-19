@@ -15,6 +15,12 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Never forward repository credentials to a redirected URL.
 
 
+class SCMHTTPError(Refused):
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f"SCM HTTP {status}; no response body logged")
+
+
 class Provider:
     def __init__(self, config):
         self.config = config
@@ -25,7 +31,7 @@ class Provider:
                         else "/projects/" + quote(repository, safe=""))
         self.opener = build_opener(NoRedirect())
 
-    def request(self, method, path, data=None):
+    def request(self, method, path, data=None, *, attempts=3, timeout=20):
         token = os.environ.get(self.config["token_env"])
         require(token, "missing SCM token in " + self.config["token_env"])
         headers = {"Accept": "application/json", "User-Agent": "codex-factory-pilot/1"}
@@ -34,22 +40,27 @@ class Provider:
             headers["Content-Type"] = "application/json"
         req = Request(self.root + path, method=method, headers=headers,
                       data=None if data is None else json.dumps(data).encode())
-        for attempt in range(3):
+        for attempt in range(attempts):
             try:
-                with self.opener.open(req, timeout=20) as response:
+                with self.opener.open(req, timeout=timeout) as response:
                     body = response.read(2 * 1024 * 1024 + 1)
                     require(len(body) <= 2 * 1024 * 1024, "SCM response is too large")
                     return json.loads(body)
             except HTTPError as error:
-                if method == "GET" and (error.code == 429 or error.code >= 500) and attempt < 2:
+                if method == "GET" and (error.code == 429 or error.code >= 500) and attempt + 1 < attempts:
                     time.sleep(2 ** attempt)
                     continue
-                raise Refused("SCM HTTP %s; no response body logged" % error.code) from None
+                raise SCMHTTPError(error.code) from None
             except (URLError, TimeoutError):
-                if method == "GET" and attempt < 2:
+                if method == "GET" and attempt + 1 < attempts:
                     time.sleep(2 ** attempt)
                     continue
                 raise Refused("SCM request failed; check connectivity and credentials") from None
+
+    def test_issue_access(self):
+        # Exercise the same repository issue route as queue(), with a single read.
+        rows = self.request("GET", self.project + "/issues?per_page=1", attempts=1, timeout=8)
+        require(isinstance(rows, list), "The endpoint returned an unexpected response for repository issues.")
 
     def pages(self, path, params):
         for page in range(1, 101):

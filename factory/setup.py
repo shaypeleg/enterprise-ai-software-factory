@@ -12,9 +12,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from .config import Refused, load, require, validate
+from .config import Refused, load, require, validate, validate_git_url, validate_scm
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
+from .scm import Provider, SCMHTTPError
 from .workspace import setup_target
 
 
@@ -23,6 +24,7 @@ ASSETS = Path(__file__).resolve().with_name("setup_ui")
 PRESET = ".factory-settings.json"
 PORTABLE = ("version", "git_url", "base_branch", "scm", "models", "checks", "protected_paths",
             "max_rounds", "agent_timeout_seconds", "check_timeout_seconds")
+SCM_FIELDS = ("provider", "api_url", "repository", "token_env", "queue_label")
 
 
 def managed_root():
@@ -130,20 +132,61 @@ def initial(root):
             "presetMessage": message, "hasConfig": path.is_file(), "roles": list(ROLES)}
 
 
+def connection_key(config):
+    scm = config["scm"]
+    return (config["git_url"], scm["provider"], scm["api_url"].rstrip("/"),
+            scm["repository"], scm["token_env"])
+
+
+def check_clone(root, git_url, scm):
+    require(git_url == detect(root)["git_url"],
+            "The clone URL must match the detected Git origin (or its HTTPS equivalent).")
+    require(scm["token_env"] not in ("CODEX_API_KEY", "OPENAI_API_KEY"),
+            "Use separate environment variables for Git credentials and OpenAI credentials.")
+
+
+def verify_connection(root, config):
+    scm = {key: config["scm"][key] for key in SCM_FIELDS}
+    git_url = config["git_url"]
+    validate_scm(scm)
+    validate_git_url(git_url, scm["repository"])
+    check_clone(root, git_url, scm)
+    endpoint, clone = urlsplit(scm["api_url"]), urlsplit(git_url)
+    endpoint_host = (endpoint.hostname, endpoint.port or 443)
+    clone_host = (clone.hostname, clone.port or 443)
+    trusted_host = (("api.github.com", 443)
+                    if scm["provider"] == "github" and clone_host == ("github.com", 443)
+                    else clone_host)
+    require(endpoint_host == trusted_host,
+            "The connection test only sends tokens to the Git origin’s host or the official GitHub API.")
+    require(os.environ.get(scm["token_env"]),
+            f"{scm['token_env']} is missing. Set it in the launch environment, then reopen setup.")
+    try:
+        Provider(scm).test_issue_access()
+    except SCMHTTPError as error:
+        explanations = {
+            401: "The server rejected the token. Check that it is valid and belongs to this Git host.",
+            403: "The token lacks issue access, or the server blocked the request.",
+            404: "Check the API base URL, the full repository path, and the token’s access to the project.",
+            429: "The API rate limit was reached. Try again later.",
+        }
+        detail = explanations.get(error.status, "Check the API endpoint and your network access.")
+        raise Refused(f"HTTP {error.status}. {detail}") from None
+    except ValueError:
+        raise Refused("The endpoint did not return a repository issues response. Check the API base URL.") from None
+    return connection_key(config)
+
+
 def save(root, data):
     require(isinstance(data, dict) and data.get("consent") is True, "Confirm project access before saving.")
     config = {key: data["config"][key] for key in PORTABLE}
-    config["scm"] = {key: config["scm"][key] for key in
-                     ("provider", "api_url", "repository", "token_env", "queue_label")}
+    config["scm"] = {key: config["scm"][key] for key in SCM_FIELDS}
     require(set(config["models"]).issubset({"default", *ROLES}), "Unknown model role.")
     config.update(execution_mode="local-pilot", checkout=str(root),
                   state_dir=str(state_path(root, secrets.token_hex(8))),
                   release={"auto_merge": False, "deploy": False})
     path = configuration_path(root)
-    require(config["git_url"] == detect(root)["git_url"],
-            "The clone URL must match the detected Git origin (or its HTTPS equivalent).")
-    require(config["scm"]["token_env"] not in ("CODEX_API_KEY", "OPENAI_API_KEY"),
-            "Use separate environment variables for Git credentials and OpenAI credentials.")
+    check_clone(root, config["git_url"], config["scm"])
     validate(config, path)
     if path.is_file():
         previous = load(path)
@@ -220,7 +263,8 @@ def server_for(root, repositories=None):
 
         def do_POST(self):
             url = urlsplit(self.path)
-            if (url.path not in ("/api/setup", "/api/finish") or not self.valid_host() or not self.authorized() or
+            if (url.path not in ("/api/setup", "/api/connection", "/api/finish") or
+                    not self.valid_host() or not self.authorized() or
                     self.headers.get("Origin") != f"http://127.0.0.1:{self.server.server_port}"):
                 return self.reply(403, {"error": "Open the private setup URL printed in your terminal."})
             if self.server.saved:
@@ -235,11 +279,20 @@ def server_for(root, repositories=None):
                 require(self.headers.get_content_type() == "application/json" and 0 < size <= 65536,
                         "Expected setup JSON under 64 KB.")
                 path = self.selected_repository(url.query)
-                result = save(path, json.loads(self.rfile.read(size)))
+                payload = json.loads(self.rfile.read(size))
+                if url.path == "/api/connection":
+                    self.server.verified.pop(path, None)
+                    self.server.verified[path] = verify_connection(path, payload)
+                    return self.reply(200, {"verified": True})
+                verified = self.server.verified.get(path) == connection_key(payload["config"])
+                require(verified or payload.get("allowUnverified") is True,
+                        "Test this connection or explicitly choose to save it unverified.")
+                result = save(path, payload)
+                result["verified"] = verified
             except Refused as error:
                 return self.reply(400, {"error": str(error)})
             except (ValueError, TypeError, KeyError, AttributeError, OSError):
-                return self.reply(400, {"error": "Could not save settings. Check the inputs and file permissions."})
+                return self.reply(400, {"error": "Could not complete this step. Check the configuration inputs."})
             self.server.configured.add(result["path"])
             self.server.saved = repositories is None
             self.reply(200, result)
@@ -248,6 +301,7 @@ def server_for(root, repositories=None):
     server.timeout = 0.5
     server.saved = False
     server.configured = set()
+    server.verified = {}
     return server, f"http://127.0.0.1:{server.server_port}/#{token}"
 
 

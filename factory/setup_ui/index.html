@@ -69,7 +69,10 @@
             <p id="permission-target" class="project"></p>
             <p id="permissions"></p>
             <label>Git token environment variable<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" required autocomplete="off"></label>
-            <p class="hint">Set this variable and <code>CODEX_API_KEY</code> in the environment that runs Codex. This page never requests token values.</p>
+            <p class="hint">Set this variable in the environment that launches setup. The test uses it to read one page of issues from the selected endpoint. Tokens stay out of the browser.</p>
+            <button type="button" class="back" id="test-connection">Test connection</button>
+            <p id="connection-status" class="hint" role="status">Connection unverified.</p>
+            <label class="option" id="unverified-option"><input type="checkbox" id="allow-unverified"><span>Save settings without verifying the connection.</span></label>
             <label class="option"><input type="checkbox" id="consent" required><span>I approve this repository, endpoint, and check commands for use by the factory.</span></label>
             <label class="option"><input type="checkbox" id="share"><span>Also save a shareable <code>.factory-settings.json</code> preset in the project. Review the settings before committing it. Keep secrets out of check commands.</span></label>
           </div>

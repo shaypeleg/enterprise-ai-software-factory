@@ -102,6 +102,7 @@ def main():
         if name == "install":
             command.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
             command.add_argument("--workspace", action="store_true", help="install for a workspace with a repository selector")
+            command.add_argument("--skip-setup", action="store_true", help="install or update the skill without opening setup")
     for name in ("validate", "queue", "status"):
         commands.add_parser(name)
     for name in ("run", "publish"):
@@ -140,6 +141,8 @@ def main():
             if args.command == "install":
                 target = install_skill(root, managed=args.managed)
                 print(f"Installed Codex skill at {target}", flush=True)
+                if args.skip_setup:
+                    return
             serve(selected, open_browser=not args.no_browser, repositories=repositories)
             return
         path = Path(args.config) if args.config else configuration_path(project_root(args.project))

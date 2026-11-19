@@ -15,11 +15,11 @@ staging and production steps to connect in your own CI. [CI integration requirem
    npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install
    ```
 
-2. **Complete the browser wizard.** Confirm the repository, pick a model, and
-   enter the project’s checks. Set `CODEX_API_KEY` and the GitHub or GitLab token
-   variable shown by the wizard in the environment Codex uses. For a project with
-   several checkouts, add `--workspace` to the install command and configure the
-   repositories you want to use. [Workspace setup](#work-with-multiple-repositories)
+2. **Complete the browser wizard.** Select the repository, pick a model, and
+   enter the project’s checks. Use **Test connection** to verify issue access
+   with the GitHub or GitLab token from the installer’s environment. Set
+   `CODEX_API_KEY` in the environment Codex uses for runs. For several checkouts,
+   add `--workspace` to installation. [Workspace setup](#work-with-multiple-repositories)
 3. **Run an issue in Codex.** Apply the configured queue label to an open issue,
    then open the same checkout in Codex. Replace `42` with your issue number.
 
@@ -106,6 +106,26 @@ If the project already uses a symlink from the Python installer, remove that
 symlink before switching to `npx`. Your saved configuration stays in your user
 configuration directory.
 
+## Update an installed skill
+
+Rerun the installer from the same project or workspace to update the managed
+skill. `--skip-setup` applies the update without reopening the wizard. Saved
+configuration and job state stay in place.
+
+```bash
+npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install --skip-setup
+```
+
+For a multi-repository install, append `--workspace` and run from the workspace
+root. To install a particular revision, append `#COMMIT_OR_TAG` to the package
+URL and replace `COMMIT_OR_TAG` with its GitHub commit ID or tag. If Codex still
+shows the previous skill, reopen the project or restart Codex.
+
+The installer does not check for updates in the background. Check the
+[repository’s commit history](https://github.com/shaypeleg/enterprise-ai-software-factory/commits/main/)
+for changes. GitHub’s **Watch → Custom → Releases** can notify you when a
+release is published. A push to `main` alone does not publish a release.
+
 ## Configure in the browser
 
 The wizard shows the full delivery workflow, including the future staging and
@@ -119,9 +139,14 @@ Choose a default OpenAI model ID and optionally override it for each role. Model
 suggestions are examples. Use IDs available to your OpenAI API project. Add the
 application's checks as JSON argument arrays, for example
 `[["npm", "test"], ["npm", "run", "lint"]]`. The access step asks you to approve
-those commands and the selected endpoint. Supply `CODEX_API_KEY` and the configured
-SCM token separately through your secret manager or launch environment. The
-wizard saves configuration locally and does not request or test credential values.
+those commands and the selected endpoint. Supply the configured Git token in
+the process environment before opening setup, then select **Test connection**.
+The wizard uses the repository issues API to verify read access. It sends the
+token only to the Git origin’s HTTPS host and port or the official GitHub API
+for `github.com`. The browser receives a status message. Verification does not
+check push or publication permissions. Save unverified explicitly if you are
+working offline or your API is served through a separate host. Supply
+`CODEX_API_KEY` separately for Codex runs.
 
 To share settings with teammates, select **Also save a shareable preset** to write
 `.factory-settings.json` in the application root. Review it before committing.

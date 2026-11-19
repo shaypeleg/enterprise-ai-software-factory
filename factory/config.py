@@ -20,15 +20,13 @@ def load(path):
     return validate(json.loads(path.read_text()), path)
 
 
-def validate(config, path):
-    require(config.get("version") == 1, "unsupported configuration version")
-    require(config.get("execution_mode") == "local-pilot", "only local-pilot is implemented")
-    scm = config["scm"]
+def validate_scm(scm):
     require(scm["provider"] in ("github", "gitlab"), "provider must be github or gitlab")
     url = urlsplit(scm["api_url"])
     require(url.scheme == "https" and url.hostname and not (
         url.username or url.password or url.query or url.fragment
     ), "api_url must be HTTPS without credentials, query, or fragment")
+    require(url.port != 0, "api_url must use a valid HTTPS port")
     require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", scm["token_env"]), "invalid token_env")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", scm["repository"]),
             "repository must be an explicit owner/project or group/subgroup/project")
@@ -36,6 +34,21 @@ def validate(config, path):
             "invalid repository path")
     require(isinstance(scm["queue_label"], str) and scm["queue_label"].strip(), "queue_label is required")
     require(scm["queue_label"].isascii() and "," not in scm["queue_label"], "invalid queue label")
+
+
+def validate_git_url(git_url, repository):
+    remote = urlsplit(git_url)
+    require(remote.scheme == "https" and remote.hostname and not (
+        remote.username or remote.password or remote.query or remote.fragment
+    ) and remote.path.strip("/").removesuffix(".git") == repository,
+            "git_url must be the explicit HTTPS clone URL of scm.repository")
+
+
+def validate(config, path):
+    require(config.get("version") == 1, "unsupported configuration version")
+    require(config.get("execution_mode") == "local-pilot", "only local-pilot is implemented")
+    scm = config["scm"]
+    validate_scm(scm)
     for key in ("checkout", "state_dir"):
         require(Path(config[key]).is_absolute(), key + " must be absolute")
         config[key] = str(Path(config[key]).resolve())
@@ -47,11 +60,7 @@ def validate(config, path):
             "configuration must live outside the target checkout")
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./-]*", config["base_branch"])
             and ".." not in config["base_branch"], "invalid base branch")
-    remote = urlsplit(config["git_url"])
-    require(remote.scheme == "https" and remote.hostname and not (
-        remote.username or remote.password or remote.query or remote.fragment
-    ) and remote.path.strip("/").removesuffix(".git") == scm["repository"],
-            "git_url must be the explicit HTTPS clone URL of scm.repository")
+    validate_git_url(config["git_url"], scm["repository"])
     for key in ("max_rounds", "agent_timeout_seconds", "check_timeout_seconds"):
         require(type(config[key]) is int and 1 <= config[key] <= 3600, "invalid " + key)
     require(config["max_rounds"] <= 10, "max_rounds cannot exceed 10")

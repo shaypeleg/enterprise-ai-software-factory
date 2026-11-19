@@ -20,8 +20,12 @@ const roles = {
 const fields = ['git_url', 'base_branch'];
 const scmFields = ['provider', 'api_url', 'repository', 'token_env', 'queue_label'];
 const limits = ['max_rounds', 'check_timeout_seconds', 'agent_timeout_seconds'];
+const testButton = element('test-connection');
+const allowUnverified = element('allow-unverified');
 let step = 0;
 let settings;
+let verified = false;
+let busy = false;
 
 function notice(text, info = false) {
   messages.hidden = !text;
@@ -31,7 +35,7 @@ function notice(text, info = false) {
 
 async function request(options = {}, endpoint = '/api/setup') {
   const selected = element('workspace-repository').value;
-  const query = selected && endpoint === '/api/setup' ? `?repository=${encodeURIComponent(selected)}` : '';
+  const query = selected && endpoint !== '/api/finish' ? `?repository=${encodeURIComponent(selected)}` : '';
   const result = await fetch(endpoint + query, {
     ...options,
     headers: {'X-Factory-Session': session, ...options.headers},
@@ -48,12 +52,31 @@ function showStep(index, focus = true) {
     steps[position].toggleAttribute('aria-current', position === index);
     if (position === index) steps[position].setAttribute('aria-current', 'step');
   }
-  next.textContent = index === 2 ? 'Save configuration' : 'Continue';
+  updateActions();
   element('back').hidden = index === 0;
   if (index === 2) {
     element('permission-target').textContent = `${element('repository').value} · ${element('api_url').value}`;
   }
   if (focus) panels[index].querySelector('h2').focus();
+}
+
+function updateActions() {
+  const saving = step === 2;
+  next.disabled = busy || (saving && !verified && !allowUnverified.checked);
+  next.textContent = saving ? (verified ? 'Save configuration' : 'Save unverified configuration') : 'Continue';
+  testButton.disabled = busy;
+  element('unverified-option').hidden = verified;
+}
+
+function connectionStatus(text, passed = false) {
+  verified = passed;
+  allowUnverified.checked = false;
+  element('connection-status').textContent = text;
+  updateActions();
+}
+
+function invalidateConnection() {
+  connectionStatus('Connection unverified.');
 }
 
 function describeAccess() {
@@ -73,6 +96,7 @@ function providerChanged() {
     : `https://${host}/api/v4`;
   element('token_env').value = `FACTORY_${provider.toUpperCase()}_TOKEN`;
   describeAccess();
+  invalidateConnection();
 }
 
 function buildRoleInputs(values, names) {
@@ -98,11 +122,16 @@ function buildRoleInputs(values, names) {
   }
 }
 
+const value = (id) => element(id).value.trim();
+
+function connection() {
+  return {git_url: value('git_url'), scm: Object.fromEntries(scmFields.map((key) => [key, value(key)]))};
+}
+
 function collect() {
-  const value = (id) => element(id).value.trim();
   const config = {version: 1};
   for (const key of fields) config[key] = value(key);
-  config.scm = Object.fromEntries(scmFields.map((key) => [key, value(key)]));
+  config.scm = connection().scm;
   config.models = {default: value('default-model')};
   for (const role of settings.roles) {
     if (value(`model-${role}`)) config.models[role] = value(`model-${role}`);
@@ -110,12 +139,43 @@ function collect() {
   config.checks = JSON.parse(value('checks'));
   config.protected_paths = value('protected_paths').split('\n').map((line) => line.trim()).filter(Boolean);
   for (const key of limits) config[key] = Number(value(key));
-  return {config, consent: element('consent').checked, share: element('share').checked};
+  return {config, consent: element('consent').checked, share: element('share').checked,
+    allowUnverified: allowUnverified.checked};
 }
+
+function setBusy(flag) {
+  busy = flag;
+  element('workspace-repository').disabled = flag;
+  element('back').disabled = flag;
+  updateActions();
+}
+
+testButton.addEventListener('click', async () => {
+  if (!element('token_env').reportValidity()) return;
+  const payload = JSON.stringify(connection());
+  setBusy(true);
+  connectionStatus('Checking authenticated issue access…');
+  try {
+    await request({method: 'POST', headers: {'Content-Type': 'application/json'}, body: payload}, '/api/connection');
+    if (payload === JSON.stringify(connection())) {
+      connectionStatus('Verified. The token can read issues in this repository.', true);
+    }
+  } catch (error) {
+    if (payload === JSON.stringify(connection())) connectionStatus(`Unverified. ${error.message}`);
+  } finally {
+    setBusy(false);
+  }
+});
+
+for (const key of ['git_url', 'api_url', 'repository', 'token_env']) {
+  element(key).addEventListener('input', invalidateConnection);
+}
+allowUnverified.addEventListener('change', updateActions);
 
 form.noValidate = true;
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
+  if (busy || (step === 2 && !verified && !allowUnverified.checked)) return;
   notice('');
   for (const input of panels[step].querySelectorAll('input, select, textarea')) {
     if (!input.checkValidity()) {
@@ -132,9 +192,7 @@ form.addEventListener('submit', async (event) => {
     element('checks').focus();
     return;
   }
-  next.disabled = true;
-  element('workspace-repository').disabled = true;
-  element('back').disabled = true;
+  setBusy(true);
   next.textContent = 'Saving…';
   try {
     const saved = await request({method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
@@ -144,6 +202,7 @@ form.addEventListener('submit', async (event) => {
     element('saved-path').textContent = saved.shared
       ? `Private config saved at ${saved.path}. The project preset was also saved.`
       : `Private config saved at ${saved.path}.`;
+    if (!saved.verified) element('saved-path').textContent += ' Connection unverified.';
     element('finish').hidden = !settings.repositories;
     element('skill-command').textContent = settings.repositories ? '$factory workspace list' : '$factory';
     if (settings.repositories) {
@@ -153,10 +212,7 @@ form.addEventListener('submit', async (event) => {
   } catch (error) {
     notice(error.message);
   } finally {
-    next.disabled = false;
-    element('workspace-repository').disabled = false;
-    element('back').disabled = false;
-    next.textContent = 'Save configuration';
+    setBusy(false);
   }
 });
 
@@ -204,6 +260,7 @@ async function loadRepository() {
     buildRoleInputs(config.models, settings.roles);
     element('consent').checked = false;
     element('share').checked = false;
+    invalidateConnection();
     describeAccess();
     notice(settings.presetMessage, true);
     showStep(0, false);
