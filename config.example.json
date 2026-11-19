@@ -13,7 +13,7 @@
     "queue_label": "factory:ready"
   },
   "models": {
-    "default": "REPLACE_WITH_AVAILABLE_CODEX_MODEL"
+    "default": "auto"
   },
   "max_rounds": 3,
   "agent_timeout_seconds": 900,

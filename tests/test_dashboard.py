@@ -30,6 +30,8 @@ class DashboardTests(unittest.TestCase):
         with State(self.config) as state:
             state.save(self.job, "transition")
             self.assertEqual(list_runs(self.settings)[0]["stage"], "gate")
+            state.save(self.job, "started-gate")
+            self.assertEqual(list_runs(self.settings)[0]["active_role"], "gate")
             self.job.update(stage="build", round=2)
             self.job["results"]["feedback"] = "A check failed"
             state.save(self.job, "revision-required")
@@ -45,8 +47,17 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(result["rounds"][2]["gate"]["verdict"], "PASS")
             self.assertEqual(result["rounds"][2]["code"]["report"], "Reviewed changes")
             self.assertEqual(result["job"]["stage"], "review")
+            state.save(self.job, "started-security")
+            row = list_runs(self.settings)[0]
+            self.assertEqual(row["active_role"], "security")
+            self.assertEqual(row["review_roles"], ("code", "security"))
+            self.assertEqual(row["rounds"][1]["gate"]["verdict"], "FAIL")
+            self.assertEqual(row["rounds"][2]["gate"]["verdict"], "PASS")
+            self.assertNotIn("Reviewed changes", json.dumps(row))
             self.assertNotIn("Private issue details", json.dumps(result))
             self.assertNotIn("private-fingerprint", json.dumps(result))
+        self.assertIsNone(list_runs(self.settings)[0]["active_role"])
+        self.assertIsNone(run_detail(self.settings, 12)["job"]["active_role"])
 
     def test_dashboard_api_requires_a_local_private_session(self):
         with patch("factory.dashboard.HTTPServer") as server_factory:

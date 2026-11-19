@@ -82,7 +82,7 @@ def validate(config, path):
     require(isinstance(models, dict) and "default" in models, "models.default is required")
     for model in models.values():
         require(isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", model)
-                and not model.startswith("REPLACE"), "select an available OpenAI model explicitly")
+                and not model.startswith("REPLACE"), 'select an available Codex model or use "auto"')
     require(config.get("release") == {"auto_merge": False, "deploy": False},
             "this runner cannot merge or deploy")
     return config

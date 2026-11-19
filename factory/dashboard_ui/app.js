@@ -2,21 +2,32 @@
 
 const session = location.hash.slice(1);
 const el = (id) => document.getElementById(id);
-const stages = {intake: 'Intake', spec: 'Specification', build: 'Build', gate: 'Checks', review: 'Reviews',
+const drawer = el('run-details');
+const lanes = [
+  ['intake', 'Intake', ['intake']],
+  ['spec', 'Spec', ['spec']],
+  ['build', 'Build', ['build', 'gate']],
+  ['review', 'Review', ['review']],
+  ['approval', 'Approval', ['handoff', 'ready']],
+  ['human', 'Needs human', ['needs-info', 'needs-human']],
+  ['done', 'Done', ['published', 'rejected']],
+];
+const stages = {intake: 'Intake', spec: 'Specification', build: 'Build', gate: 'Checks', review: 'Review',
   handoff: 'Handoff', ready: 'Ready to publish', published: 'Draft published', rejected: 'Rejected',
-  'needs-human': 'Needs human review', 'needs-info': 'Needs more information'};
+  'needs-human': 'Needs human review', 'needs-info': 'Needs information'};
 const roles = {intake: 'Intake', spec: 'Specification', build: 'Build', gate: 'Checks', code: 'Code review',
   security: 'Security review', ux: 'UX review', ui: 'UI review', handoff: 'Handoff'};
-const workflow = ['intake', 'spec', 'build', 'gate', 'review', 'handoff'];
+const abbreviations = {gate: 'Gate', code: 'Code', security: 'Security', ux: 'UX', ui: 'UI'};
 const events = {created: 'Run created', transition: 'Stage changed', 'base-pinned': 'Base commit pinned',
   'gate-pass': 'Checks passed', 'revision-required': 'Revision requested', published: 'Draft PR/MR published',
   'commit-prepared': 'Candidate commit prepared', interrupted: 'Run interrupted',
   'unexpected-candidate-mutation': 'Candidate changed unexpectedly'};
 const dateTime = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit'});
+const displayName = (name) => name === '.' ? 'Parent' : name;
+const runKey = ({name, number}) => JSON.stringify([name, number]);
 let repositories = [];
-let current = null;
 let selection = null;
-let displayed = '';
+let boardStamp = '';
 let detailStamp = '';
 
 function node(tag, text = '', className = '') {
@@ -33,19 +44,20 @@ async function read(path) {
   return payload;
 }
 
-function statusDetails(payload) {
-  el('project').textContent = payload.project;
+function updateRepositories({project, repositories: list}) {
+  repositories = list;
+  el('project').textContent = project;
   const filter = el('repository');
   const selected = filter.value;
-  const options = payload.repositories.map(({name, status}) => [name, `${displayName(name)} · ${status.replaceAll('-', ' ')}`]);
-  if (JSON.stringify(Array.from(filter.options).slice(1).map((entry) => [entry.value, entry.textContent])) !== JSON.stringify(options)) {
+  const options = list.map(({name, status}) => [name, status === 'configured'
+    ? displayName(name) : `${displayName(name)} · ${status.replaceAll('-', ' ')}`]);
+  const before = Array.from(filter.options).slice(1).map((entry) => [entry.value, entry.textContent]);
+  if (JSON.stringify(before) !== JSON.stringify(options)) {
     filter.replaceChildren(new Option('All repositories', ''), ...options.map(([key, label]) => new Option(label, key)));
     filter.value = options.some(([name]) => name === selected) ? selected : '';
   }
   el('repository-filter').hidden = options.length < 2;
 }
-
-const displayName = (name) => name === '.' ? 'Parent' : name;
 
 function matchingRuns() {
   const filter = el('repository').value;
@@ -54,52 +66,10 @@ function matchingRuns() {
     .sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')) || b.number - a.number);
 }
 
-function sameRun(job, other) {
-  return Boolean(job && other && job.name === other.name && job.number === other.number);
-}
-
-function renderList() {
-  const jobs = matchingRuns();
-  const next = jobs.find((job) => sameRun(job, selection)) || jobs[0] || null;
-  if (!sameRun(next, selection)) detailStamp = '';
-  selection = next;
-  const signature = JSON.stringify([jobs, selection?.name, selection?.number]);
-  if (signature !== displayed) {
-    displayed = signature;
-    const focusedKey = document.activeElement?.dataset.run;
-    const rows = jobs.map((job) => {
-      const item = node('li');
-      const button = node('button', '', 'run-link');
-      button.type = 'button';
-      button.dataset.run = JSON.stringify([job.name, job.number]);
-      button.setAttribute('aria-pressed', String(sameRun(job, selection)));
-      button.append(node('small', `${displayName(job.name)} · #${job.number}`), node('strong', job.title),
-        node('span', `${stageLabel(job)} · Round ${job.round}`, 'run-meta'));
-      button.addEventListener('click', () => {
-        selection = job;
-        renderList();
-        showSelected(true);
-      });
-      item.append(button);
-      return item;
-    });
-    el('runs').replaceChildren(...rows);
-    if (focusedKey) Array.from(el('runs').querySelectorAll('button')).find((item) => item.dataset.run === focusedKey)?.focus();
-  }
-  el('count').textContent = String(jobs.length);
-  el('empty').hidden = jobs.length > 0;
-  const configured = repositories.some((repo) => repo.status === 'configured');
-  el('empty').textContent = configured
-    ? 'No recorded runs in this view. Start a labeled issue with $factory run, or use $factory workspace run for several repositories.'
-    : 'No accessible run records. Configure a checkout with $factory setup or check your local state.';
-  if (!selection) {
-    el('run-title').textContent = 'Run details';
-    el('detail').replaceChildren(node('p', 'Stage progress and review results will appear here as jobs run.', 'muted'));
-  }
-}
-
 function stageLabel(job) {
-  return job.last_event === 'interrupted' ? `Interrupted at ${stages[job.stage] || job.stage}` : stages[job.stage] || job.stage;
+  if (job.active_role) return `${roles[job.active_role]} running`;
+  if (job.last_event === 'interrupted' || job.last_event?.startsWith('started-')) return 'Interrupted';
+  return stages[job.stage] || job.stage;
 }
 
 function link(label, value) {
@@ -115,133 +85,231 @@ function link(label, value) {
   } catch { return null; }
 }
 
-function formatTime(date) {
-  if (!date) return '';
-  const value = new Date(date);
-  return Number.isNaN(value.getTime()) ? '' : dateTime.format(value);
+function linksFor(job, full = false) {
+  const links = node('p', '', 'card-links');
+  const issue = link(full ? 'View issue' : 'Issue', job.issue_url);
+  const request = link(full ? 'View draft PR/MR' : 'Draft PR/MR', job.request_url);
+  if (issue) links.append(issue);
+  if (request) links.append(request);
+  return links.childElementCount ? links : null;
 }
 
-function renderDetail(payload, repo) {
-  const {job, events: entries, rounds, started} = payload;
-  el('run-title').textContent = job.title;
-  const time = Math.round((Date.parse(job.updated) - Date.parse(started)) / 1000);
-  const duration = Number.isFinite(time) && time >= 0
-    ? ` · ${Math.floor(time / 60) ? `${Math.floor(time / 60)}m ` : ''}${time % 60}s to last update` : '';
-  const meta = node('p', `${displayName(repo)} · #${job.number} · ${stageLabel(job)} · Round ${job.round}${job.risk ? ` · ${job.risk} risk` : ''}${duration}`, 'run-meta');
-  const links = node('p', '', 'links');
-  for (const anchor of [link('View issue', job.issue_url), link('View draft PR/MR', job.request_url)]) {
-    if (anchor) links.append(anchor);
+function chip(role, verdict, short = false) {
+  const label = verdict === 'running' ? 'In progress' : verdict;
+  const kind = ['PASS', 'READY', 'ACCEPT'].includes(verdict) ? 'pass'
+    : ['FAIL', 'CHANGES', 'BLOCKED', 'REJECT'].includes(verdict) ? 'fail'
+    : verdict === 'running' ? 'progress' : '';
+  const name = roles[role];
+  const badge = node('span', short ? abbreviations[role] : `${name} · ${label}`, `chip ${kind}`.trim());
+  if (short) {
+    badge.title = `${name} · ${label}`;
+    badge.append(node('span', ` · ${label}`, 'visually-hidden'));
   }
-  const progress = node('ol', '', 'milestones');
-  progress.setAttribute('aria-label', 'Stages in the current workflow');
-  const active = workflow.indexOf(job.stage);
-  for (const [index, stage] of workflow.entries()) {
-    const item = node('li', stages[stage]);
-    if (active === index) item.setAttribute('aria-current', 'step');
-    if ((active > index && (job.round === 1 || index < 2)) || ['published', 'ready'].includes(job.stage)) item.className = 'complete';
-    progress.append(item);
+  return badge;
+}
+
+function roundTags(job) {
+  const rows = node('div', '', 'card-rounds');
+  for (let round = 1; round <= job.round; round++) {
+    const recorded = job.rounds?.[round] || {};
+    const active = round === job.round ? job.active_role : null;
+    const gate = active === 'gate' ? 'running' : recorded.gate?.verdict;
+    if (!gate) continue;
+    const row = node('div', '', 'card-round');
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', `Round ${round}`);
+    row.append(node('span', `R${round}`, 'round-label'), chip('gate', gate, true));
+    if (gate === 'PASS') {
+      for (const role of job.review_roles) {
+        const verdict = active === role ? 'running' : recorded[role]?.verdict;
+        if (verdict) row.append(chip(role, verdict, true));
+      }
+    }
+    rows.append(row);
   }
-  const key = JSON.stringify([repo, job.number]);
-  const openRounds = el('detail').dataset.run === key
-    ? new Map(Array.from(el('detail').querySelectorAll('details')).map((item) => [item.dataset.round, item.open]))
-    : new Map();
+  return rows.childElementCount ? rows : null;
+}
+
+function elapsed(job) {
+  const seconds = Math.floor(((job.active_role ? Date.now() : Date.parse(job.updated)) - Date.parse(job.started)) / 1000);
+  if (!Number.isFinite(seconds)) return '';
+  const total = Math.max(0, seconds);
+  return total < 60 ? `${total}s` : total < 3600 ? `${Math.floor(total / 60)}m`
+    : `${Math.floor(total / 3600)}h ${Math.floor(total / 60) % 60}m`;
+}
+
+function renderCard(job) {
+  const item = node('li', '', 'run-card');
+  item.dataset.active = String(Boolean(job.active_role));
+  item.dataset.waiting = String(['needs-human', 'needs-info'].includes(job.stage));
+  const button = node('button', '', 'run-open');
+  button.type = 'button';
+  button.dataset.run = runKey(job);
+  button.setAttribute('aria-haspopup', 'dialog');
+  const identity = repositories.length > 1 ? `${displayName(job.name)} · #${job.number}` : `#${job.number}`;
+  button.append(node('span', identity, 'identity'), node('strong', job.title));
+  button.addEventListener('click', () => {
+    selection = job;
+    detailStamp = '';
+    el('run-identity').textContent = identity;
+    el('run-title').textContent = job.title;
+    el('detail').replaceChildren(node('p', 'Loading run details…', 'run-meta'));
+    drawer.showModal();
+    showSelected();
+  });
+  const meta = node('p', '', 'card-meta');
+  meta.append(node('span', stageLabel(job), 'card-state'));
+  if (job.risk) meta.append(node('span', `${job.risk} risk`));
+  if (job.started) meta.append(node('span', elapsed(job), 'elapsed'));
+  const links = linksFor(job);
+  const rounds = roundTags(job);
+  item.append(button, meta);
+  if (links) item.append(links);
+  if (rounds) item.append(rounds);
+  return item;
+}
+
+function renderBoard() {
+  const jobs = matchingRuns();
+  if (selection) {
+    selection = jobs.find((job) => runKey(job) === runKey(selection)) || null;
+    if (!selection && drawer.open) drawer.close();
+  }
+  const stamp = JSON.stringify(jobs);
+  if (stamp !== boardStamp) {
+    boardStamp = stamp;
+    const focusedKey = document.activeElement?.dataset.run;
+    const columns = lanes.map(([key, label, states]) => {
+      const lane = node('section', '', 'lane');
+      lane.dataset.lane = key;
+      const title = node('h2', label);
+      title.id = `lane-${key}`;
+      lane.setAttribute('aria-labelledby', title.id);
+      const items = jobs.filter((job) => states.includes(job.stage));
+      const heading = node('header', '', 'lane-heading');
+      heading.append(title, node('span', String(items.length), 'lane-count'));
+      const list = node('ul', '', 'cards');
+      list.append(...items.map(renderCard));
+      lane.append(heading, list);
+      return lane;
+    });
+    el('board').replaceChildren(...columns);
+    if (focusedKey) focusCard(focusedKey);
+  } else {
+    const active = new Map(jobs.filter((job) => job.active_role).map((job) => [runKey(job), job]));
+    for (const card of el('board').querySelectorAll('[data-active="true"]')) {
+      const job = active.get(card.querySelector('button').dataset.run);
+      const time = card.querySelector('.elapsed');
+      if (job && time) time.textContent = elapsed(job);
+    }
+  }
+  el('count').textContent = `${jobs.length} ${jobs.length === 1 ? 'run' : 'runs'} · ${jobs.filter((job) => job.active_role).length} active`;
+  el('empty').hidden = jobs.length > 0;
+  const filter = el('repository').value;
+  const visible = repositories.filter(({name}) => !filter || name === filter);
+  el('empty').textContent = visible.some(({status}) => status === 'configured')
+    ? 'No runs yet. Start a labeled issue with $factory run.'
+    : 'No run data is available. Check your local settings or use $factory setup.';
+}
+
+function focusCard(key) {
+  Array.from(el('board').querySelectorAll('button')).find((button) => button.dataset.run === key)?.focus();
+}
+
+function renderDetail({job, rounds, events: entries}) {
+  const meta = node('p', `${stageLabel(job)} · Round ${job.round}${job.risk ? ` · ${job.risk} risk` : ''}`, 'run-meta');
+  const links = linksFor(job, true);
+  const detail = el('detail');
+  const openRounds = new Map(Array.from(detail.querySelectorAll('details')).map((entry) => [entry.dataset.round, entry.open]));
+  const focusedRound = document.activeElement?.parentElement?.dataset.round;
+  const scroll = detail.scrollTop;
   const evidence = node('section', '', 'evidence');
   evidence.append(node('h3', 'Checks and reviews by round'));
-  const roundList = node('div', '', 'rounds');
   for (const [number, reports] of Object.entries(rounds).reverse()) {
     const details = node('details');
     details.dataset.round = number;
     details.open = openRounds.get(number) ?? (number === String(job.round));
     details.append(node('summary', `Round ${number}`));
-    const chips = node('ul', '', 'verdicts');
+    const tags = node('div', '', 'verdicts');
     for (const role of Object.keys(roles)) {
-      const result = reports[role];
-      if (!result) continue;
-      const state = ['READY', 'PASS', 'ACCEPT'].includes(result.verdict) ? 'good' : 'attention';
-      chips.append(node('li', `${roles[role]} · ${result.verdict}`, state));
+      if (reports[role]) tags.append(chip(role, reports[role].verdict));
     }
-    details.append(chips);
+    details.append(tags);
     for (const role of Object.keys(roles)) {
-      if (!reports[role]?.report) continue;
-      details.append(node('h4', roles[role]), node('pre', reports[role].report));
+      if (reports[role]?.report) details.append(node('h4', roles[role]), node('pre', reports[role].report));
     }
-    roundList.append(details);
+    evidence.append(details);
   }
-  if (roundList.childElementCount) evidence.append(roundList);
-  else evidence.append(node('p', 'Results appear here as checks and reviews complete.', 'muted empty'));
+  if (!Object.keys(rounds).length) evidence.append(node('p', 'Results appear here as each stage finishes.', 'run-meta'));
   const activity = node('section', '', 'evidence');
   activity.append(node('h3', 'Recent activity'));
   const history = node('ol', '', 'history');
-  for (const entry of entries.slice(-10).reverse()) {
-    const role = entry.event.startsWith('stage-') ? roles[entry.event.slice(6)] : null;
-    const label = role ? `${role} recorded` : events[entry.event] || entry.event;
+  for (const {event, at, stage} of entries.slice(-12).reverse()) {
+    let label = events[event] || event;
+    if (event.startsWith('stage-')) label = `${roles[event.slice(6)] || stage} recorded`;
+    if (event.startsWith('started-')) label = `${roles[event.slice(8)] || stage} started`;
     const row = node('li');
-    const timeEl = node('time', formatTime(entry.at));
-    timeEl.dateTime = entry.at;
-    row.append(node('span', `${label} · ${stages[entry.stage] || entry.stage}`), timeEl);
+    const date = new Date(at);
+    const time = node('time', Number.isNaN(date.getTime()) ? '' : dateTime.format(date));
+    time.dateTime = at;
+    row.append(node('span', label), time);
     history.append(row);
   }
   activity.append(history);
-  el('detail').dataset.run = key;
-  el('detail').replaceChildren(meta, links, progress, evidence, activity);
+  detail.replaceChildren(meta, ...(links ? [links] : []), evidence, activity);
+  if (focusedRound) {
+    Array.from(detail.querySelectorAll('details')).find((entry) => entry.dataset.round === focusedRound)
+      ?.querySelector('summary')?.focus({preventScroll: true});
+  }
+  detail.scrollTop = scroll;
 }
 
-async function showSelected(moveFocus = false) {
+async function showSelected() {
   const target = selection;
-  if (!target) return;
-  const stamp = JSON.stringify([target.name, target.number, target.updated, target.stage]);
-  if (stamp === detailStamp) {
-    if (moveFocus) el('run-title').focus();
-    return;
-  }
+  if (!target || !drawer.open) return;
+  const stamp = JSON.stringify([runKey(target), target.updated, target.active_role]);
+  if (stamp === detailStamp) return;
   const params = new URLSearchParams({repository: target.name, issue: String(target.number)});
-  let payload;
   try {
-    payload = await read(`/api/run?${params}`);
+    const payload = await read(`/api/run?${params}`);
+    if (selection !== target || !drawer.open) return;
+    detailStamp = stamp;
+    renderDetail(payload);
   } catch (error) {
-    if (sameRun(target, selection)) showDetailError(error);
-    return;
+    if (selection === target && drawer.open) el('detail').replaceChildren(node('p', error.message, 'notice'));
   }
-  if (!sameRun(target, selection) || target.updated !== selection.updated) return;
-  detailStamp = stamp;
-  renderDetail(payload, target.name);
-  if (moveFocus) el('run-title').focus();
 }
 
-function showDetailError(error) {
-  el('detail').replaceChildren(node('p', error.message, 'notice'));
-  detailStamp = '';
-}
-
-function connectionStatus(text, stale = false) {
+function connectionStatus(text, cssClass) {
   const status = el('connection');
   if (status.textContent !== text) status.textContent = text;
-  status.classList.toggle('stale', stale);
+  status.className = `connection ${cssClass}`.trim();
 }
 
 async function refresh() {
   try {
-    const payload = await read('/api/runs');
-    current = payload;
-    repositories = payload.repositories;
-    statusDetails(payload);
-    renderList();
-    connectionStatus('Live · refreshes every 2s');
+    updateRepositories(await read('/api/runs'));
+    renderBoard();
+    connectionStatus('Live · local', 'is-live');
     el('message').hidden = true;
     await showSelected();
-  } catch (error) {
-    connectionStatus('Dashboard disconnected', true);
-    el('message').textContent = 'The local dashboard stopped responding. Keep the dashboard command running and reopen its private URL if needed.';
+  } catch (_) {
+    connectionStatus('Disconnected', 'stale');
+    el('message').textContent = 'The dashboard stopped responding. Keep its command running and reopen the private URL.';
     el('message').hidden = false;
-    if (!current) el('empty').textContent = 'Live data is unavailable.';
+    if (!repositories.length) el('empty').hidden = true;
   } finally {
     setTimeout(refresh, 2000);
   }
 }
 
-el('repository').addEventListener('change', () => { renderList(); showSelected(); });
+el('repository').addEventListener('change', renderBoard);
+drawer.addEventListener('close', () => {
+  if (selection) focusCard(runKey(selection));
+  selection = null;
+});
 if (session) refresh();
 else {
-  el('connection').textContent = 'Private link required';
-  el('empty').textContent = 'Open the private dashboard URL printed in your terminal.';
+  connectionStatus('Private link required', '');
+  el('empty').textContent = 'Open the private dashboard URL printed by $factory dashboard.';
 }

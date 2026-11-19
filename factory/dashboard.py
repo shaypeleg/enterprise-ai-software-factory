@@ -1,14 +1,17 @@
 """Read-only views of recorded factory runs in the current project or workspace."""
 
+import fcntl
 import json
 import sqlite3
 import webbrowser
 from contextlib import closing
 from http.server import HTTPServer
+from itertools import groupby
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import Refused, load
+from .engine import review_roles
 from .local_ui import LocalHandler, private_url
 
 
@@ -23,15 +26,29 @@ def database(settings):
     return path if path.is_file() else None
 
 
-def summarize(job, when=None, last_event=None):
+def summarize(job, when=None, last_event=None, started=None, active=False):
     issue = job["issue"]
+    role = last_event.removeprefix("started-") if last_event else None
     return {"number": issue["number"], "title": issue["title"], "issue_url": issue.get("url"),
             "request_url": job.get("request_url"), "stage": job["stage"], "round": job["round"],
-            "risk": job["results"].get("intake", {}).get("risk"), "updated": when, "last_event": last_event}
+            "risk": job["results"].get("intake", {}).get("risk"), "updated": when, "last_event": last_event,
+            "started": started, "active_role": role if active and role in ROLES else None,
+            "review_roles": review_roles(job)}
 
 
 def open_reader(path):
     return sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1)
+
+
+def worker_busy(path):
+    try:
+        with path.with_name("worker.lock").open("rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except FileNotFoundError:
+        pass
+    return False
 
 
 def list_runs(settings):
@@ -39,14 +56,30 @@ def list_runs(settings):
     if not path:
         return []
     with closing(open_reader(path)) as reader:
+        reader.execute("BEGIN")
+        busy = worker_busy(path)
         rows = reader.execute("""
-            WITH latest AS (SELECT job, MAX(sequence) AS seq FROM events GROUP BY job)
-            SELECT jobs.value, events.at, events.event
-            FROM jobs LEFT JOIN latest ON latest.job = jobs.id
-            LEFT JOIN events ON events.sequence = latest.seq
-            ORDER BY latest.seq DESC, jobs.id DESC LIMIT 200
-        """)
-        return [summarize(json.loads(raw), when, event) for raw, when, event in rows]
+            WITH bounds AS (SELECT job, MIN(sequence) AS first, MAX(sequence) AS last FROM events GROUP BY job)
+            SELECT jobs.id, jobs.value, latest.at, latest.event, first.at,
+                   latest.sequence = (SELECT MAX(sequence) FROM events)
+            FROM jobs LEFT JOIN bounds ON bounds.job = jobs.id
+            LEFT JOIN events AS latest ON latest.sequence = bounds.last
+            LEFT JOIN events AS first ON first.sequence = bounds.first
+            ORDER BY bounds.last DESC, jobs.id DESC LIMIT 200
+        """).fetchall()
+        jobs = {number: summarize(json.loads(raw), updated, event, started, busy and latest)
+                for number, raw, updated, event, started, latest in rows}
+        if jobs:
+            placeholders = ", ".join("?" for _ in jobs)
+            snapshots = reader.execute(f"""
+                SELECT job, at, event, value FROM events WHERE job IN ({placeholders})
+                AND (event LIKE 'stage-%' OR event IN ('gate-pass', 'revision-required', 'transition'))
+                ORDER BY job, sequence
+            """, tuple(jobs))
+            for number, entries in groupby(snapshots, key=lambda row: row[0]):
+                rounds, _ = recorded_results((row[1:] for row in entries), include_reports=False)
+                jobs[number]["rounds"] = rounds
+        return list(jobs.values())
 
 
 def run_detail(settings, number):
@@ -60,6 +93,8 @@ def run_detail(settings, number):
             return None
         job = json.loads(row[0])
         created = reader.execute("SELECT at FROM events WHERE job=? ORDER BY sequence LIMIT 1", (number,)).fetchone()
+        last_worker_job = reader.execute("SELECT job FROM events ORDER BY sequence DESC LIMIT 1").fetchone()
+        active = last_worker_job == (number,) and worker_busy(path)
         events = reader.execute("""
             SELECT at, event, value FROM (
                 SELECT sequence, at, event, value FROM events
@@ -68,11 +103,12 @@ def run_detail(settings, number):
         """, (number,))
         attempts, timeline = recorded_results(events)
     latest = timeline[-1] if timeline else {}
-    return {"job": summarize(job, latest.get("at"), latest.get("event")),
-            "started": created[0] if created else None, "rounds": attempts, "events": timeline}
+    started = created[0] if created else None
+    return {"job": summarize(job, latest.get("at"), latest.get("event"), started, active),
+            "started": started, "rounds": attempts, "events": timeline}
 
 
-def recorded_results(events):
+def recorded_results(events, include_reports=True):
     attempts = {}
     timeline = []
     previous = None
@@ -84,14 +120,15 @@ def recorded_results(events):
             role = "gate"
         result = snapshot["results"].get(role) if role in ROLES else None
         if result:
-            attempts.setdefault(round_number, {})[role] = {
-                "verdict": result.get("verdict"), "report": (result.get("report") or "")[:12000],
-            }
+            attempts.setdefault(round_number, {})[role] = {"verdict": result.get("verdict")}
+            if include_reports:
+                attempts[round_number][role]["report"] = (result.get("report") or "")[:12000]
         if event == "revision-required" and previous and previous[0] == "gate":
-            attempts.setdefault(previous[1], {})["gate"] = {
-                "verdict": "FAIL", "report": (snapshot["results"].get("feedback") or "")[:12000],
-            }
-        timeline.append({"at": at, "event": event, "stage": stage, "round": round_number})
+            attempts.setdefault(previous[1], {})["gate"] = {"verdict": "FAIL"}
+            if include_reports:
+                attempts[previous[1]]["gate"]["report"] = (snapshot["results"].get("feedback") or "")[:12000]
+        if include_reports:
+            timeline.append({"at": at, "event": event, "stage": stage, "round": round_number})
         previous = (stage, round_number)
     return attempts, timeline
 
@@ -102,8 +139,6 @@ def server_for(project, repositories):
             if not self.valid_host():
                 return self.reply(403, {"error": "Invalid dashboard host."})
             url = urlsplit(self.path)
-            if url.path == "/theme.css":
-                return self.asset("/style.css", ASSETS.with_name("setup_ui"))
             if not url.path.startswith("/api/"):
                 return self.asset(url.path, ASSETS)
             if not self.authorized():

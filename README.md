@@ -17,8 +17,8 @@ staging and production steps to connect in your own CI. [CI integration requirem
 
 2. **Complete the browser wizard.** Select the repository, pick a model, and
    review the suggested checks. Use **Test connection** to verify issue access
-   with your workspace’s Git credentials or a Git token environment variable. Set
-   `CODEX_API_KEY` in the environment Codex uses for runs. For several checkouts,
+   with your workspace’s Git credentials or a Git token environment variable.
+   For model runs, the skill can use your saved Codex sign-in. For several checkouts,
    add `--workspace` to installation. [Workspace setup](#work-with-multiple-repositories)
 3. **Label an issue.** Create the configured issue label if it is missing. The
    default is `factory:ready` (one colon). In GitLab, go to **Manage → Labels →
@@ -74,10 +74,21 @@ merges or deployments.
   entirely outside this controller and its workers.
 - macOS or Linux; the pilot uses POSIX locks and process groups.
 
-This uses `codex exec`, not Claude agent definitions or Claude subscription
-authentication. Each role is a fresh Codex invocation; routing and state are
-implemented in Python. Model IDs can be configured per role (`intake`, `spec`,
+Each role runs in its own `codex exec` session when you start a job from the
+Codex app or terminal. The Python controller records routing, results and gates.
+Model IDs can be configured per role (`intake`, `spec`,
 `build`, `code`, `security`, `ux`, `ui`, `handoff`), falling back to `default`.
+
+### Sign in for model runs
+
+With `CODEX_API_KEY` unset, the factory uses the ChatGPT sign-in visible to the
+local Codex CLI. Run `codex login status` to check. If the CLI cannot see your
+desktop sign-in, run `codex login` on the machine that executes the skill.
+Use a current Codex CLI with permission profiles. The wizard defaults to
+`auto` so Codex can select an available model. Enter a model ID to override
+that selection for any role. For headless jobs, setting `CODEX_API_KEY` explicitly uses
+API-key authentication. GitHub and GitLab authentication is configured separately.
+[Codex authentication](https://learn.chatgpt.com/docs/auth)
 
 ## Install the skill with npx
 
@@ -167,7 +178,6 @@ The token is kept out of the browser and saved settings. The test contacts the
 Git origin’s HTTPS host and port, or the official GitHub API for `github.com`,
 and checks issue read access. Push and PR/MR permissions are checked when used.
 For a separate API hostname, use an environment token and save unverified.
-Supply `CODEX_API_KEY` separately for Codex runs.
 
 To share settings with teammates, select **Also save a shareable preset** to write
 `.factory-settings.json` in the application root. Review it before committing.
@@ -209,10 +219,16 @@ available for operator-managed, out-of-tree configuration using
 ## Watch runs in the browser
 
 Open `$factory dashboard` for the current checkout or `$factory workspace dashboard`
-for all configured checkouts. The local page refreshes every two seconds while
-the dashboard command is running. It shows each issue’s stage, round, recorded
-checks and reviews, recent activity, and draft PR/MR link when available. It reads
-the job database alongside the worker and requires no additional API credentials.
+for all configured checkouts. The live board moves cards through Intake, Spec,
+Build, Review and Approval. Jobs waiting on a person go to Needs human, and draft
+publication or rejection moves them to Done. A card in Approval can be finishing
+the handoff or waiting for you to request publication.
+
+Each round shows green tags for passing checks or reviews, red for failures or
+requested changes, and a dotted tag for the check or reviewer currently running.
+Open a card for reports, recent activity, and links to the issue and draft PR/MR.
+The page refreshes every two seconds while the dashboard command is running and
+reads the job database alongside the worker.
 
 Start the dashboard before or during a run. In a terminal from the target project,
 use `python3 .agents/skills/factory/launch.py dashboard` (or `workspace dashboard`).

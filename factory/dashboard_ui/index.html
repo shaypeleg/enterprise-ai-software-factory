@@ -3,31 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Factory run dashboard</title>
-  <link rel="stylesheet" href="/theme.css">
+  <title>Factory runs</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true"></span> Factory</div><span class="local">Local dashboard</span></header>
-  <main class="dash">
-    <header class="dash-heading">
-      <div><h1>Factory runs</h1><p id="project" class="muted">Follow job progress in this checkout.</p></div>
-      <p id="connection" role="status" class="connection">Connecting…</p>
+  <main class="workspace">
+    <header class="page-header">
+      <div><h1>Factory runs</h1><p id="project"></p></div>
+      <p id="connection" class="connection" role="status">Connecting</p>
     </header>
-    <p id="message" role="alert" class="notice" hidden></p>
-    <div class="run-layout">
-      <section class="run-list" aria-labelledby="list-title">
-        <div class="list-head"><h2 id="list-title">Runs</h2><span id="count" class="muted"></span></div>
-        <label id="repository-filter" hidden>Repository<select id="repository"><option value="">All repositories</option></select></label>
-        <ul id="runs" class="runs" aria-label="Recorded runs"></ul>
-        <p id="empty" class="empty muted">Loading recorded runs…</p>
-      </section>
-      <section class="run-details" aria-labelledby="run-title">
-        <h2 id="run-title" tabindex="-1">Run details</h2>
-        <div id="detail"><p class="muted">Select a run to inspect its progress and review results.</p></div>
-      </section>
+    <div class="toolbar">
+      <label id="repository-filter" hidden>Repository <select id="repository"><option value="">All repositories</option></select></label>
+      <p id="count" class="count"></p>
+      <ul class="legend" aria-label="Verdict key">
+        <li><span class="key pass" aria-hidden="true"></span>Pass</li>
+        <li><span class="key fail" aria-hidden="true"></span>Failed</li>
+        <li><span class="key progress" aria-hidden="true"></span>In progress</li>
+      </ul>
     </div>
+    <p id="message" role="alert" class="notice" hidden></p>
+    <p id="empty" class="notice">Loading runs…</p>
+    <div id="board" class="board" aria-label="Run stages"></div>
   </main>
+  <dialog id="run-details" class="drawer" aria-labelledby="run-title">
+    <header class="drawer-heading">
+      <div><p id="run-identity" class="identity"></p><h2 id="run-title" tabindex="-1">Run details</h2></div>
+      <form method="dialog"><button class="close" autofocus>Close</button></form>
+    </header>
+    <div id="detail" class="drawer-body"></div>
+  </dialog>
 </body>
 </html>

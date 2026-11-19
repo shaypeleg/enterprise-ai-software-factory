@@ -24,6 +24,13 @@ PROTECTED = (".git*", ".github/**", ".gitlab/**", ".codex/**", ".agents/**",
 STOP = {"ready", "needs-human", "needs-info", "rejected", "published"}
 
 
+def review_roles(job):
+    roles = ("code", "security")
+    if "ui" in job["results"].get("intake", {}).get("surfaces", ()):
+        roles += ("ux", "ui")
+    return roles
+
+
 class State:
     def __init__(self, config):
         self.root = Path(config["state_dir"])
@@ -231,6 +238,7 @@ class Engine:
                    + self.config["protected_paths"], "merge": "human only", "deploy": "CI only"}}
         directory = self.state.root / "artifacts" / str(job["issue"]["number"]) / str(job["round"])
         try:
+            self.state.save(job, "started-" + role)
             result = self.runtime.run(role, self.path(job), context, directory)
         finally:
             if role != "build":
@@ -245,6 +253,7 @@ class Engine:
         return result
 
     def gate(self, job):
+        self.state.save(job, "started-gate")
         before = self.fingerprint(job)
         changed = self.safe_paths(job)
         require(changed, "builder produced no changes")
@@ -300,10 +309,7 @@ class Engine:
                     job["stage"] = "review"
                 elif stage == "review":
                     require(self.fingerprint(job) == job["fingerprint"], "candidate changed since gate")
-                    roles = ["code", "security"]
-                    if "ui" in job["results"]["intake"]["surfaces"]:
-                        roles += ["ux", "ui"]
-                    results = [self.stage(job, role) for role in roles]
+                    results = [self.stage(job, role) for role in review_roles(job)]
                     if any(result["verdict"] == "CHANGES" for result in results):
                         self.retry(job, "Address every review marked CHANGES.")
                         continue

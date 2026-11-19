@@ -4,8 +4,8 @@ The factory turns labeled GitHub or GitLab issues into reviewed code changes. It
 
 ## Get started
 
-1. In the target project, use `$factory setup` to open the browser wizard. Confirm the repository, choose a default OpenAI model and any role-specific overrides, and review the commands the factory should run as checks.
-2. Use **Test connection** to confirm that the factory can read issues. Use the workspace’s Git credentials or the configured Git token environment variable. Agent runs use a separate `CODEX_API_KEY`.
+1. In the target project, use `$factory setup` to open the browser wizard. Confirm the repository, use the `auto` model setting or choose a model for each role, and review the commands the factory should run as checks.
+2. Use **Test connection** to confirm that the factory can read issues. Model runs use your local Codex sign-in or an explicitly set `CODEX_API_KEY`. If needed, check your account with `codex login status`.
 3. Create the configured issue label if it is missing. The default is `factory:ready` (one colon). In GitLab, use **Manage → Labels → New label**. In GitHub, use **Issues → Labels → New label**. Apply the exact label to an open issue. One label is enough.
 4. Run `$factory dashboard` and open the private browser link to watch the job. Use `$factory queue` to confirm the issue appears, then start it with `$factory run 42`, replacing `42` with your issue number. Labeling an issue adds it to the queue. Starting it is a separate command.
 
@@ -15,7 +15,7 @@ The factory turns labeled GitHub or GitLab issues into reviewed code changes. It
 2. **Build and checks.** Make changes in a separate Git worktree and run the configured checks.
 3. **Review and handoff.** Run code and security reviews and, when intake flags a UI change, UI and UX reviews. Failed checks or requests for changes can send the job back to build within the configured limit. The handoff summarizes the evidence and marks the job `ready` when all gates pass. A job can stop early for missing information or human review.
 
-Use `$factory status` for recorded jobs or `$factory dashboard` for a read-only live browser view of stages, checks, and reviews. If you close the tab, reopen the same private URL while the dashboard command is running. Run the command again if it stopped.
+Use `$factory status` for recorded jobs or `$factory dashboard` for the live stage board. Green tags show passing checks and reviews, red tags show failures or changes requested, and dotted tags show work in progress. Open a card for reports and issue links. If you close the tab, reopen the same private URL while the dashboard command is running.
 
 ## Publish and release
 

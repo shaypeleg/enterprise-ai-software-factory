@@ -29,11 +29,12 @@ code or imply that external protections have been configured.
    verified gates; a separate production identity is available only to the
    protected production pipeline. Neither token enters an agent workspace.
 
-The pilot filters SCM/cloud credentials from worker environments, but its
-processes share one host and it passes `CODEX_API_KEY` to the Codex process.
-Shell environment filtering does not protect that key from all same-host
-process attacks. Fresh HOME/CODEX_HOME and read-only reviewer sandboxes reduce
-exposure; an external sandbox plus model-auth proxy is a release blocker.
+The pilot filters SCM and cloud credentials from agent and check environments.
+For local sign-in, the Codex process uses the account profile and its permission
+profile denies role commands access to the file-based login cache. API-key mode
+uses a fresh profile and passes the key to the Codex process. Pilot processes
+still share a host, and configured check commands run as the local user. Worker
+isolation and a model-auth proxy remain required before enterprise rollout.
 
 ## Exact staging and production contract
 

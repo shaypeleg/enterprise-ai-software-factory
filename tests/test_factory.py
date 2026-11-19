@@ -461,6 +461,52 @@ class RuntimeTests(unittest.TestCase):
             self.assertNotIn("SCM_TOKEN", env)
             self.assertIn('shell_environment_policy.inherit="none"', argv)
 
+    def test_roles_use_the_signed_in_codex_profile_with_no_api_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            profile = root / "signed-in"
+            profile.mkdir()
+
+            def fake_execute(argv, cwd, env, timeout, log, stdin):
+                self.assertEqual(Path(env["CODEX_HOME"]), profile)
+                self.assertNotEqual(Path(env["HOME"]), profile)
+                self.assertNotIn("SCM_TOKEN", env)
+                self.assertNotIn("CODEX_API_KEY", env)
+                self.assertNotIn("--sandbox", argv)
+                self.assertIn("--ignore-user-config", argv)
+                self.assertIn("permissions.factory-role.network.enabled=false", argv)
+                self.assertTrue(any(f'"{profile / "auth.json"}" = "deny"' in arg for arg in argv))
+                verdict = "READY" if log.stem == "build" else "PASS"
+                Path(argv[argv.index("--output-last-message") + 1]).write_text(json.dumps({
+                    "verdict": verdict, "report": "Test result", "risk": "low", "surfaces": []}))
+
+            login = subprocess.CompletedProcess([], 0, "", "Logged in using ChatGPT")
+            with patch.dict(os.environ, {"CODEX_HOME": str(profile), "SCM_TOKEN": "scm-secret"}, clear=True):
+                runtime = Codex({"models": {"default": "auto", "security": "review-model"},
+                                 "agent_timeout_seconds": 15}, "/trusted/codex")
+                with patch("factory.runtime.subprocess.run", return_value=login) as status:
+                    with patch("factory.runtime.execute", side_effect=fake_execute) as execute_role:
+                        self.assertEqual(runtime.run("build", root, {}, root / "logs")["verdict"], "READY")
+                        self.assertEqual(runtime.run("security", root, {}, root / "logs")["verdict"], "PASS")
+            status.assert_called_once()
+            self.assertEqual(execute_role.call_count, 2)
+            build_args, review_args = [call.args[0] for call in execute_role.call_args_list]
+            self.assertIn('permissions.factory-role.extends=":workspace"', build_args)
+            self.assertIn('permissions.factory-role.extends=":read-only"', review_args)
+            self.assertNotIn("--model", build_args)
+            self.assertEqual(review_args[review_args.index("--model") + 1], "review-model")
+
+    def test_missing_codex_login_refuses_before_launching_a_role(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {}, clear=True):
+            root = Path(temp)
+            runtime = Codex({"models": {"default": "test"}, "agent_timeout_seconds": 15}, "/trusted/codex")
+            status = subprocess.CompletedProcess([], 1, "", "Not logged in")
+            with patch("factory.runtime.subprocess.run", return_value=status):
+                with patch("factory.runtime.execute") as execute_role:
+                    with self.assertRaisesRegex(Refused, "Sign in to Codex"):
+                        runtime.run("build", root, {}, root / "logs")
+            execute_role.assert_not_called()
+
     def test_invalid_codex_verdict_is_refused(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

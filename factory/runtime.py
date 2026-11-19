@@ -66,10 +66,41 @@ def execute(argv, cwd, env, timeout, log, stdin=None):
 class Codex:
     def __init__(self, config, executable):
         self.config, self.executable = config, executable
+        self.account_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser().resolve()
+        self.account_verified = False
+
+    def verify_account(self, home):
+        if self.account_verified:
+            return
+        env = clean_env(home)
+        env["CODEX_HOME"] = str(self.account_home)
+        try:
+            status = subprocess.run(
+                [self.executable, "-c", 'cli_auth_credentials_store="auto"', "login", "status"],
+                cwd=home, env=env, capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            raise Refused("Could not check the local Codex login. Run codex login status on this machine.") from None
+        require(status.returncode == 0 and "Logged in using ChatGPT" in status.stdout + status.stderr,
+                "Sign in to Codex with ChatGPT on this machine or set CODEX_API_KEY for API-key runs.")
+        self.account_verified = True
+
+    def account_permissions(self, role):
+        profile = "factory-role"
+        prefix = f"permissions.{profile}"
+        baseline = ":workspace" if role == "build" else ":read-only"
+        auth_file = self.account_home / "auth.json"
+        # The Codex executable itself may be installed beneath CODEX_HOME.
+        denied = {auth_file, auth_file.resolve()}
+        rules = ", ".join(f'{json.dumps(str(path), ensure_ascii=False)} = "deny"' for path in sorted(denied))
+        return ["--strict-config", "-c", 'cli_auth_credentials_store="auto"',
+                "-c", f'default_permissions="{profile}"', "-c", f'{prefix}.extends="{baseline}"',
+                "-c", f"{prefix}.network.enabled=false", "-c", f"{prefix}.filesystem={{{rules}}}"]
 
     def run(self, role, worktree, context, artifact_dir):
         require(role in ROLES, "unknown role")
         model = self.config["models"].get(role, self.config["models"]["default"])
+        model_args = [] if model == "auto" else ["--model", model]
         schema = {"type": "object", "additionalProperties": False, "properties": {
             "verdict": {"type": "string", "enum": list(ROLES[role])},
             "report": {"type": "string"},
@@ -89,18 +120,24 @@ class Codex:
             schema_path, result_path = home / "schema.json", home / "result.json"
             schema_path.write_text(json.dumps(schema))
             env = clean_env(home)
-            codex_home = home / ".codex"
-            codex_home.mkdir(mode=0o700)
-            env["CODEX_HOME"] = str(codex_home)
-            key = os.environ.get("CODEX_API_KEY")
-            require(key, "CODEX_API_KEY is required for pilot execution")
-            env["CODEX_API_KEY"] = key
+            api_key = os.environ.get("CODEX_API_KEY")
+            if api_key:
+                codex_home = home / ".codex"
+                codex_home.mkdir(mode=0o700)
+                env["CODEX_HOME"] = str(codex_home)
+                env["CODEX_API_KEY"] = api_key
+                permissions = ["--sandbox", "workspace-write" if role == "build" else "read-only",
+                               "-c", 'sandbox_workspace_write.network_access=false']
+            else:
+                self.verify_account(home)
+                env["CODEX_HOME"] = str(self.account_home)
+                permissions = self.account_permissions(role)
             argv = [self.executable, "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--json",
-                    "--sandbox", "workspace-write" if role == "build" else "read-only",
-                    "--model", model, "-C", str(worktree), "--output-schema", str(schema_path),
+                    *model_args, "-C", str(worktree), "--output-schema", str(schema_path),
                     "--output-last-message", str(result_path),
-                    "-c", 'shell_environment_policy.inherit="none"',
-                    "-c", 'sandbox_workspace_write.network_access=false', "-"]
+                    "--disable", "hooks", "--disable", "plugins",
+                    "-c", 'approval_policy="never"', "-c", 'shell_environment_policy.inherit="none"',
+                    *permissions, "-"]
             execute(argv, worktree, env, self.config["agent_timeout_seconds"],
                     artifact_dir / (role + ".jsonl"), prompt)
             require(result_path.is_file() and result_path.stat().st_size <= 1024 * 1024,

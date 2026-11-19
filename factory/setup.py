@@ -114,7 +114,7 @@ def initial(root):
     defaults["scm"]["credential_source"] = "workspace"
     checks, suggested_checks_hint = suggest(root)
     checks_hint = suggested_checks_hint
-    defaults.update(models={"default": ""}, checks=checks)
+    defaults["checks"] = checks
     path = configuration_path(root)
     message = ""
     if path.is_file():
