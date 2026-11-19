@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "execution_mode": "local-pilot",
+  "checkout": "/absolute/path/to/target-repository",
+  "state_dir": "/absolute/path/to/private-factory-state",
+  "git_url": "https://gitlab.example.com/team/application.git",
+  "base_branch": "main",
+  "scm": {
+    "provider": "gitlab",
+    "api_url": "https://gitlab.example.com/api/v4",
+    "repository": "team/application",
+    "token_env": "FACTORY_GITLAB_TOKEN",
+    "queue_label": "factory:ready"
+  },
+  "models": {
+    "default": "REPLACE_WITH_AVAILABLE_CODEX_MODEL"
+  },
+  "max_rounds": 3,
+  "agent_timeout_seconds": 900,
+  "check_timeout_seconds": 300,
+  "checks": [
+    ["python3", "-c", "raise SystemExit('Configure real project checks before running the factory')"]
+  ],
+  "protected_paths": ["infra/**", "deploy/**", "scripts/release/**"],
+  "release": {"auto_merge": false, "deploy": false}
+}

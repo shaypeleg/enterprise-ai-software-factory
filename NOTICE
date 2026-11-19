@@ -1,0 +1,11 @@
+This Codex adaptation is inspired by Software Factory for Claude Code (v2)
+by ZazenCodes / Alex, in zazencodes/zazencodes-season-3:
+https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2
+
+Reference inspected at repository commit c467603.
+The original Claude implementation remains in the upstream repository linked above.
+
+This adaptation replaces Claude-specific orchestration with Python and OpenAI
+Codex CLI execution, adds GitHub/GitLab adapters, and removes autonomous merge
+capability. It is provided under the GNU General Public License version 3;
+see LICENSE. No enterprise-readiness certification is claimed.

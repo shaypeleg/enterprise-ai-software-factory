@@ -1,0 +1,108 @@
+"""Small GitHub/GitLab adapters. Intentionally no merge/approve/deploy API."""
+
+import json
+import os
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from .config import Refused, require
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Never forward repository credentials to a redirected URL.
+
+
+class Provider:
+    def __init__(self, config):
+        self.config = config
+        self.github = config["provider"] == "github"
+        self.root = config["api_url"].rstrip("/")
+        repository = config["repository"]
+        self.project = ("/repos/" + repository if self.github
+                        else "/projects/" + quote(repository, safe=""))
+        self.opener = build_opener(NoRedirect())
+
+    def request(self, method, path, data=None):
+        token = os.environ.get(self.config["token_env"])
+        require(token, "missing SCM token in " + self.config["token_env"])
+        headers = {"Accept": "application/json", "User-Agent": "codex-factory-pilot/1"}
+        headers.update({"Authorization": "Bearer " + token} if self.github else {"PRIVATE-TOKEN": token})
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        req = Request(self.root + path, method=method, headers=headers,
+                      data=None if data is None else json.dumps(data).encode())
+        for attempt in range(3):
+            try:
+                with self.opener.open(req, timeout=20) as response:
+                    body = response.read(2 * 1024 * 1024 + 1)
+                    require(len(body) <= 2 * 1024 * 1024, "SCM response is too large")
+                    return json.loads(body)
+            except HTTPError as error:
+                if method == "GET" and (error.code == 429 or error.code >= 500) and attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise Refused("SCM HTTP %s; no response body logged" % error.code) from None
+            except (URLError, TimeoutError):
+                if method == "GET" and attempt < 2:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise Refused("SCM request failed; check connectivity and credentials") from None
+
+    def pages(self, path, params):
+        for page in range(1, 101):
+            rows = self.request("GET", self.project + path + "?" + urlencode(
+                dict(params, per_page=100, page=page)))
+            require(isinstance(rows, list), "unexpected SCM list response")
+            yield from rows
+            if len(rows) < 100:
+                return
+        raise Refused("SCM pagination limit exceeded; narrow the queue")
+
+    def normalize(self, row):
+        return {"number": row["number"] if self.github else row["iid"],
+                "title": row["title"], "body": (row.get("body") if self.github
+                else row.get("description")) or "", "url": row["html_url"] if self.github
+                else row["web_url"], "state": row["state"],
+                "labels": [x["name"] for x in row["labels"]] if self.github else row["labels"]}
+
+    def queue(self):
+        params = {"state": "open" if self.github else "opened",
+                  "labels": self.config["queue_label"]}
+        return [self.normalize(row) for row in self.pages("/issues", params)
+                if not row.get("pull_request")]
+
+    def issue(self, number):
+        require(type(number) is int and number > 0, "issue must be a positive integer")
+        row = self.request("GET", self.project + "/issues/" + str(number))
+        require(not row.get("pull_request"), "pull requests cannot enter the issue queue")
+        issue = self.normalize(row)
+        require(issue["state"] in ("open", "opened"), "issue is closed")
+        require(self.config["queue_label"] in issue["labels"], "issue lacks the queue label")
+        return issue
+
+    def find_request(self, branch, base):
+        path = "/pulls" if self.github else "/merge_requests"
+        params = ({"state": "all", "head": self.config["repository"].split("/")[0] + ":" + branch,
+                   "base": base} if self.github else
+                  {"state": "all", "source_branch": branch, "target_branch": base})
+        rows = list(self.pages(path, params))
+        require(len(rows) <= 1, "multiple PRs/MRs for this branch; inspect manually")
+        return rows[0] if rows else None
+
+    def create_request(self, issue, branch, base):
+        existing = self.find_request(branch, base)
+        if existing:
+            require(existing["state"] in ("open", "opened"), "existing PR/MR is closed; inspect manually")
+            return existing
+        body = ("Closes #%s\n\nFactory checks and reviews passed. Trusted CI may deploy this "
+                "candidate to staging automatically. Production requires human review and a "
+                "manual merge. This publisher performed no deployment." % issue["number"])
+        title = issue["title"][:200]
+        data = ({"title": title, "body": body, "head": branch, "base": base, "draft": True}
+                if self.github else {"title": "Draft: " + title, "description": body,
+                "source_branch": branch, "target_branch": base, "remove_source_branch": False})
+        # No POST retry: after an ambiguous failure, the next invocation reconciles by branch.
+        return self.request("POST", self.project + ("/pulls" if self.github else "/merge_requests"), data)

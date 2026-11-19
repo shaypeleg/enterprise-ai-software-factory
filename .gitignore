@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local credentials and operator configuration
+.env
+.env.*
+!.env.example
+operator-config*.json
+*.local.json
+.codex/auth.json
+.codex/sessions/
+
+# Private factory state and logs
+.factory-state/
+factory-state/
+.worktrees/
+*.sqlite3
+*.sqlite3-*
+*.log
+*.jsonl
+
+# OS metadata
+.DS_Store
