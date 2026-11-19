@@ -26,6 +26,9 @@ let step = 0;
 let settings;
 let verified = false;
 let busy = false;
+let modelCatalog;
+let loadingModels = false;
+const customModel = '!custom';
 
 function notice(text, info = false) {
   messages.hidden = !text;
@@ -57,12 +60,13 @@ function showStep(index, focus = true) {
   if (index === 2) {
     element('permission-target').textContent = `${element('repository').value} · ${element('api_url').value}`;
   }
+  if (index === 1) loadModelCatalog();
   if (focus) panels[index].querySelector('h2').focus();
 }
 
 function updateActions() {
   const saving = step === 2;
-  next.disabled = busy || (saving && !verified && !allowUnverified.checked);
+  next.disabled = busy || (step === 1 && !modelCatalog) || (saving && !verified && !allowUnverified.checked);
   next.textContent = saving ? (verified ? 'Save configuration' : 'Save unverified configuration') : 'Continue';
   testButton.disabled = busy;
   element('unverified-option').hidden = verified;
@@ -141,30 +145,97 @@ function providerChanged() {
   invalidateConnection();
 }
 
+async function loadModelCatalog(refresh = false) {
+  if (loadingModels || (modelCatalog && !refresh)) return;
+  const firstLoad = !modelCatalog;
+  const button = element('refresh-models');
+  const status = element('model-catalog-status');
+  loadingModels = button.disabled = true;
+  status.textContent = 'Checking available models in Codex…';
+  try {
+    const {models} = await request({}, '/api/models');
+    if (!models.length) throw new Error();
+    modelCatalog = models;
+    status.textContent = refresh ? 'Model list refreshed.' : '';
+  } catch {
+    modelCatalog ??= [];
+    status.textContent = modelCatalog.length
+      ? 'Could not refresh the list. The previous model choices are still shown.'
+      : 'Could not list models from Codex. Choose Automatic or enter a model ID.';
+  }
+  if (firstLoad) {
+    buildRoleInputs(settings.config.models, settings.roles);
+  } else {
+    for (const select of element('model-pickers').querySelectorAll('select')) {
+      const input = element(`${select.id}-custom`);
+      setModelOptions(select, input, modelValue(select.id), select.value === customModel);
+    }
+  }
+  element('model-pickers').hidden = false;
+  loadingModels = button.disabled = false;
+  updateActions();
+}
+
+function setModelOptions(select, input, saved, keepCustom = false) {
+  select.replaceChildren();
+  if (select.id !== 'default-model') select.add(new Option('Use default model', ''));
+  select.add(new Option('Automatic (Codex chooses)', 'auto'));
+  for (const model of modelCatalog) {
+    if (model.id !== 'auto') select.add(new Option(model.label, model.id));
+  }
+  select.add(new Option('Enter model ID…', customModel));
+  select.value = keepCustom ? customModel : saved;
+  if (select.selectedIndex < 0) {
+    select.value = customModel;
+    input.value = saved;
+  }
+  input.disabled = input.hidden = select.value !== customModel;
+}
+
+function modelPicker(id, label, saved) {
+  const container = document.createElement('div');
+  container.className = 'model-picker';
+  const select = document.createElement('select');
+  select.id = id;
+  const input = document.createElement('input');
+  input.id = `${id}-custom`;
+  input.setAttribute('aria-label', `Custom model ID for ${label}`);
+  input.placeholder = 'Model ID';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.required = true;
+  input.pattern = '[A-Za-z0-9_.\\-]+';
+  select.addEventListener('change', () => {
+    input.disabled = input.hidden = select.value !== customModel;
+    if (!input.hidden) input.focus();
+  });
+  setModelOptions(select, input, saved);
+  container.append(select, input);
+  return container;
+}
+
 function buildRoleInputs(values, names) {
-  element('default-model').value = values.default ?? '';
+  element('default-model-picker').replaceChildren(modelPicker('default-model', 'Default model', values.default ?? 'auto'));
+  element('roles').replaceChildren();
   for (const name of names) {
     const description = roles[name];
     if (!description) continue;
+    const id = `model-${name}`;
+    const row = document.createElement('div');
+    row.className = 'role';
     const label = document.createElement('label');
-    label.className = 'role';
-    const title = document.createElement('span');
-    title.textContent = description[0];
+    label.htmlFor = id;
+    label.textContent = description[0];
     const detail = document.createElement('small');
     detail.textContent = description[1];
-    title.append(detail);
-    const input = document.createElement('input');
-    input.id = `model-${name}`;
-    input.setAttribute('list', 'model-ids');
-    input.placeholder = 'Use default model';
-    input.autocomplete = 'off';
-    input.value = values[name] ?? '';
-    label.append(title, input);
-    element('roles').append(label);
+    label.append(detail);
+    row.append(label, modelPicker(id, description[0], values[name] ?? ''));
+    element('roles').append(row);
   }
 }
 
 const value = (id) => element(id).value.trim();
+const modelValue = (id) => value(id) === customModel ? value(`${id}-custom`) : value(id);
 
 function connection() {
   const scm = Object.fromEntries(scmFields.map((key) => [key, value(key)]));
@@ -176,9 +247,10 @@ function collect() {
   const config = {version: 1};
   for (const key of fields) config[key] = value(key);
   config.scm = connection().scm;
-  config.models = {default: value('default-model')};
+  config.models = {default: modelValue('default-model')};
   for (const role of settings.roles) {
-    if (value(`model-${role}`)) config.models[role] = value(`model-${role}`);
+    const model = modelValue(`model-${role}`);
+    if (model) config.models[role] = model;
   }
   config.checks = JSON.parse(value('checks'));
   config.protected_paths = value('protected_paths').split('\n').map((line) => line.trim()).filter(Boolean);
@@ -275,6 +347,7 @@ form.addEventListener('submit', async (event) => {
 });
 
 element('back').addEventListener('click', () => { notice(''); showStep(step - 1); });
+element('refresh-models').addEventListener('click', () => loadModelCatalog(true));
 element('provider').addEventListener('change', providerChanged);
 element('credential_source').addEventListener('change', () => {
   if (element('credential_source').value === 'workspace') element('token_env').value = defaultTokenName();
@@ -324,8 +397,7 @@ async function loadRepository() {
     element('checks').value = config.checks.length ? JSON.stringify(config.checks, null, 2) : '';
     element('checks-suggestion').textContent = settings.checksHint;
     element('protected_paths').value = config.protected_paths.join('\n');
-    element('roles').replaceChildren();
-    buildRoleInputs(config.models, settings.roles);
+    if (modelCatalog) buildRoleInputs(config.models, settings.roles);
     element('consent').checked = false;
     element('share').checked = false;
     invalidateConnection();

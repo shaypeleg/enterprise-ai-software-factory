@@ -84,9 +84,11 @@ Model IDs can be configured per role (`intake`, `spec`,
 With `CODEX_API_KEY` unset, the factory uses the ChatGPT sign-in visible to the
 local Codex CLI. Run `codex login status` to check. If the CLI cannot see your
 desktop sign-in, run `codex login` on the machine that executes the skill.
-Use a current Codex CLI with permission profiles. The wizard defaults to
-`auto` so Codex can select an available model. Enter a model ID to override
-that selection for any role. For headless jobs, setting `CODEX_API_KEY` explicitly uses
+Use a current Codex CLI with permission profiles. The wizard lists models
+reported by the local CLI and defaults to **Automatic** so Codex can select a
+model. Use **Refresh models** after signing in or changing accounts. Each role
+can inherit the default, select a listed model, or enter its own model ID.
+For headless jobs, setting `CODEX_API_KEY` explicitly uses
 API-key authentication. GitHub and GitLab authentication is configured separately.
 [Codex authentication](https://learn.chatgpt.com/docs/auth)
 

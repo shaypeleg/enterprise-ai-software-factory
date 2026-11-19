@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from factory.config import Refused, load
+from factory.model_catalog import available_models
 from factory.project import configuration_path, detect, discovered_remote
 from factory.scm import Provider, SCMHTTPError
 from factory.setup import PRESET, connection_key, initial, install_skill, save, server_for, verify_connection
@@ -200,6 +201,49 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertEqual(result.stdout, (skill / "HELP.md").read_text(encoding="utf-8"))
         self.assertFalse(Path(os.environ["XDG_CONFIG_HOME"]).exists())
         self.assertFalse(Path(os.environ["XDG_STATE_HOME"]).exists())
+
+    def test_model_catalog_uses_reported_ids_and_filters_hidden_and_invalid_models(self):
+        cli = self.root.parent / "codex"
+        cli.write_text(
+            "#!/bin/sh\nread -r init && read -r initialized && read -r request || exit 1\n"
+            'test -z "$FACTORY_GITLAB_TOKEN" || exit 1\n'
+            "printf '%s\\n' '"
+            + json.dumps({"id": 1, "result": {}}) + "' '"
+            + json.dumps({"id": 2, "result": {"data": [
+                {"id": "catalog-entry", "model": "example-sol", "displayName": "Example Sol"},
+                {"model": "example-terra"},
+                {"model": "hidden-model", "hidden": True},
+                {"model": "invalid/model"},
+            ]}}) + "'\n"
+        )
+        cli.chmod(0o700)
+        with (patch("factory.model_catalog.shutil.which", return_value=str(cli)),
+              patch.dict(os.environ, {"FACTORY_GITLAB_TOKEN": "fixture-value"})):
+            self.assertEqual(available_models(), [
+                {"id": "example-sol", "label": "Example Sol"},
+                {"id": "example-terra", "label": "example-terra"},
+            ])
+
+    def test_model_catalog_endpoint_requires_private_session_and_refreshes_results(self):
+        with patch("factory.setup.HTTPServer") as factory_server:
+            factory_server.return_value.server_port = 42000
+            server, url = server_for(self.root)
+            handler_type = factory_server.call_args.args[1]
+        handler = handler_type.__new__(handler_type)
+        handler.server = server
+        handler.path = "/api/models"
+        handler.headers = {"Host": "127.0.0.1:42000"}
+        models = [{"id": "example-sol", "label": "Example Sol"}]
+        with patch.object(handler, "reply") as reply, patch("factory.setup.available_models", side_effect=[[], models]) as catalog:
+            handler.do_GET()
+            self.assertEqual(reply.call_args.args[0], 403)
+            catalog.assert_not_called()
+            handler.headers["X-Factory-Session"] = url.split("#", 1)[1]
+            handler.do_GET()
+            reply.assert_called_with(200, {"models": []})
+            handler.do_GET()
+            reply.assert_called_with(200, {"models": models})
+            self.assertEqual(catalog.call_count, 2)
 
     def test_cannot_save_a_different_target_or_use_model_token_for_scm(self):
         payload = self.payload()

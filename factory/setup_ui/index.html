@@ -53,10 +53,18 @@
         </section>
         <section class="panel" aria-labelledby="models-title" hidden>
           <h2 id="models-title" tabindex="-1">Models by role</h2>
-          <p class="muted">Use <code>auto</code> to let Codex choose, or enter a model ID available to your account. Leave a role blank to inherit the default. Runs use your saved Codex sign-in when <code>CODEX_API_KEY</code> is unset.</p>
-          <datalist id="model-ids"><option value="auto"></datalist>
-          <label class="default-model">Default model<input id="default-model" list="model-ids" placeholder="auto" required autocomplete="off"></label>
-          <div id="roles" class="roles"></div>
+          <p class="muted">Choose a model offered by the local Codex CLI or let Codex choose automatically. Each role can use the default model or its own selection.</p>
+          <div class="model-catalog-actions">
+            <button type="button" class="back" id="refresh-models">Refresh models</button>
+            <p id="model-catalog-status" class="hint" role="status"></p>
+          </div>
+          <div id="model-pickers" hidden>
+            <div class="default-model">
+              <label for="default-model">Default model</label>
+              <div id="default-model-picker"></div>
+            </div>
+            <div id="roles" class="roles"></div>
+          </div>
         </section>
         <section class="panel" aria-labelledby="checks-title" hidden>
           <h2 id="checks-title" tabindex="-1">Checks &amp; access</h2>

@@ -50,7 +50,10 @@ input:not([type="checkbox"]), select, textarea { min-width: 0; width: 100%; padd
 input::placeholder, textarea::placeholder { color: #58665d; opacity: 1; }
 textarea { font-family: ui-monospace, monospace; resize: vertical; }
 :focus-visible { outline: 3px solid #2d6c49; outline-offset: 3px; }
-.default-model { max-width: 360px; margin: 14px 0 22px; }
+.default-model { display: grid; gap: 5px; max-width: 360px; margin: 14px 0 22px; }
+.model-catalog-actions { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center; margin-top: 12px; }
+.model-catalog-actions .hint { margin: 0; }
+.model-picker { display: grid; gap: 5px; min-width: 0; }
 .roles { border-top: 1px solid var(--line); }
 .role { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, .8fr); align-items: center; gap: 15px; min-height: 49px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .role small { display: block; color: var(--muted); font-size: .77rem; font-weight: 450; }
@@ -79,6 +82,6 @@ button:disabled { cursor: wait; opacity: .65; }
 }
 @media (max-width: 430px) {
   .fields { grid-template-columns: minmax(0, 1fr); }
-  .role { grid-template-columns: minmax(0, 1fr) minmax(120px, .85fr); }
+  .role { grid-template-columns: minmax(0, 1fr); gap: 5px; padding-block: 9px; }
   .steps ol { gap: 12px; }
 }

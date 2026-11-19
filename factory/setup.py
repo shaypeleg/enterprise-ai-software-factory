@@ -15,6 +15,7 @@ from .check_defaults import suggest
 from .config import Refused, load, require, validate, validate_git_url, validate_scm
 from .credentials import require_api_origin
 from .local_ui import ASSETS as BROWSER_ASSETS, LocalHandler, private_url
+from .model_catalog import available_models
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
 from .scm import Provider, SCMHTTPError
@@ -237,6 +238,10 @@ def server_for(root, repositories=None):
             if not self.valid_host():
                 return self.reply(403, {"error": "Invalid setup host."})
             url = urlsplit(self.path)
+            if url.path == "/api/models":
+                if not self.authorized():
+                    return self.reply(403, {"error": "Open the private setup URL printed in your terminal."})
+                return self.reply(200, {"models": available_models()})
             if url.path == "/api/setup" and self.authorized():
                 try:
                     result = initial(self.selected_repository(url.query))
