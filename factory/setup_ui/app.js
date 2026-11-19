@@ -92,8 +92,20 @@ function describeCredentialSource() {
   element('token_env').disabled = !useVariable;
   element('token_env').required = useVariable;
   element('credential-help').textContent = useVariable
-    ? 'Set the variable before launching setup. The test reads one page of issues. The token stays out of the browser.'
+    ? `Enter the variable name, for example ${defaultTokenName()}. Set its value in the terminal before launching setup.`
     : 'Use the HTTPS token already stored by your Git credential helper. If Git uses an SSH key only, choose a token environment variable. The token stays out of the browser.';
+}
+
+function defaultTokenName() {
+  return element('provider').value === 'github' ? 'FACTORY_GITHUB_TOKEN' : 'FACTORY_GITLAB_TOKEN';
+}
+
+function validateTokenName() {
+  const field = element('token_env');
+  field.setCustomValidity('');
+  if (!field.disabled && (!field.checkValidity() || /^(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}$/.test(field.value))) {
+    field.setCustomValidity(`Enter a variable name such as ${defaultTokenName()}. Set its value in the terminal.`);
+  }
 }
 
 function providerChanged() {
@@ -104,7 +116,8 @@ function providerChanged() {
   element('api_url').value = !host ? '' : provider === 'github'
     ? (host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`)
     : `https://${host}/api/v4`;
-  element('token_env').value = `FACTORY_${provider.toUpperCase()}_TOKEN`;
+  element('token_env').value = defaultTokenName();
+  describeCredentialSource();
   describeAccess();
   invalidateConnection();
 }
@@ -135,7 +148,9 @@ function buildRoleInputs(values, names) {
 const value = (id) => element(id).value.trim();
 
 function connection() {
-  return {git_url: value('git_url'), scm: Object.fromEntries(scmFields.map((key) => [key, value(key)]))};
+  const scm = Object.fromEntries(scmFields.map((key) => [key, value(key)]));
+  if (scm.credential_source !== 'environment') delete scm.token_env;
+  return {git_url: value('git_url'), scm};
 }
 
 function collect() {
@@ -161,7 +176,8 @@ function setBusy(flag) {
 }
 
 testButton.addEventListener('click', async () => {
-  if (element('credential_source').value === 'environment' && !element('token_env').reportValidity()) return;
+  validateTokenName();
+  if (!element('token_env').reportValidity()) return;
   const payload = JSON.stringify(connection());
   setBusy(true);
   connectionStatus('Checking authenticated issue access…');
@@ -180,6 +196,7 @@ testButton.addEventListener('click', async () => {
 for (const key of ['git_url', 'api_url', 'repository', 'token_env']) {
   element(key).addEventListener('input', invalidateConnection);
 }
+element('token_env').addEventListener('input', validateTokenName);
 allowUnverified.addEventListener('change', updateActions);
 element('use-suggested-checks').addEventListener('click', () => {
   element('checks').value = JSON.stringify(settings.suggestedChecks, null, 2);
@@ -191,6 +208,7 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (busy || (step === 2 && !verified && !allowUnverified.checked)) return;
   notice('');
+  if (step === 2) validateTokenName();
   for (const input of panels[step].querySelectorAll('input, select, textarea')) {
     if (!input.checkValidity()) {
       const details = input.closest('details');
@@ -233,7 +251,9 @@ form.addEventListener('submit', async (event) => {
 element('back').addEventListener('click', () => { notice(''); showStep(step - 1); });
 element('provider').addEventListener('change', providerChanged);
 element('credential_source').addEventListener('change', () => {
+  if (element('credential_source').value === 'workspace') element('token_env').value = defaultTokenName();
   describeCredentialSource();
+  validateTokenName();
   invalidateConnection();
 });
 
@@ -272,6 +292,7 @@ async function loadRepository() {
     for (const key of fields) element(key).value = config[key] ?? '';
     for (const key of scmFields) element(key).value = config.scm[key] ?? '';
     element('credential_source').value = config.scm.credential_source ?? 'environment';
+    if (!element('token_env').value) element('token_env').value = defaultTokenName();
     for (const key of limits) element(key).value = config[key];
     element('checks').value = config.checks.length ? JSON.stringify(config.checks, null, 2) : '';
     element('checks-suggestion').textContent = settings.checksHint;
@@ -283,6 +304,7 @@ async function loadRepository() {
     invalidateConnection();
     describeAccess();
     describeCredentialSource();
+    validateTokenName();
     notice(settings.presetMessage, true);
     showStep(0, false);
     form.hidden = false;

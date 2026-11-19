@@ -30,7 +30,10 @@ def validate_scm(scm):
     source = scm.get("credential_source", "environment")
     require(source in ("workspace", "environment"), "invalid credential source")
     if source == "environment":
-        require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", scm["token_env"]), "invalid token_env")
+        name = scm["token_env"]
+        require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
+                and not re.fullmatch(r"(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}", name),
+                "Enter a Git token variable name, such as FACTORY_GITLAB_TOKEN. Set its value outside the wizard.")
     require(re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+", scm["repository"]),
             "repository must be an explicit owner/project or group/subgroup/project")
     require(all(part not in (".", "..") for part in scm["repository"].split("/")),

@@ -152,7 +152,8 @@ New setups default to **Use workspace Git credentials**. The factory asks the
 checkout’s Git credential helper for an HTTPS credential when you test the
 connection or run a job. If your terminal uses an SSH key or the helper cannot
 provide an API token, choose **Use a token environment variable** and set it in
-the process environment before launching setup. Existing selections are preserved.
+the process environment before launching setup. Enter the variable name in the
+wizard, for example `FACTORY_GITLAB_TOKEN`. Existing selections are preserved.
 The token is kept out of the browser and saved settings. The test contacts the
 Git origin’s HTTPS host and port, or the official GitHub API for `github.com`,
 and checks issue read access. Push and PR/MR permissions are checked when used.

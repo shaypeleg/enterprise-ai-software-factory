@@ -35,6 +35,7 @@ class ProjectSetupTests(unittest.TestCase):
     def payload(self):
         config = initial(self.root)["config"]
         config["scm"]["credential_source"] = "environment"
+        config["scm"]["token_env"] = f"FACTORY_{config['scm']['provider'].upper()}_TOKEN"
         config.update(models={"default": "test-model", "security": "security-model"},
                       checks=[["python3", "-m", "unittest"]])
         return {"config": config, "consent": True, "share": True}
@@ -94,6 +95,31 @@ class ProjectSetupTests(unittest.TestCase):
             with self.assertRaisesRegex(Refused, "only sends tokens"):
                 scm.queue()
             helper.assert_not_called()
+
+    def test_workspace_settings_discard_an_unused_token_field(self):
+        payload = self.payload()
+        scm = payload["config"]["scm"]
+        scm.update(credential_source="workspace", token_env="dummy.credential")
+        save(self.root, payload)
+        local = configuration_path(self.root)
+        self.assertNotIn("token_env", load(local)["scm"])
+        self.assertNotIn("token_env", json.loads((self.root / PRESET).read_text())["scm"])
+
+        # Existing settings from older installers must not repopulate that field.
+        legacy = load(local)
+        legacy["scm"]["token_env"] = "dummy.credential"
+        local.write_text(json.dumps(legacy))
+        self.assertNotIn("token_env", initial(self.root)["config"]["scm"])
+        save(self.root, payload)
+        self.assertNotIn("token_env", load(local)["scm"])
+
+    def test_token_field_rejects_values_that_look_like_credentials(self):
+        payload = self.payload()
+        for value in ("dummy.credential", "ghp_" + "x" * 35):
+            payload["config"]["scm"]["token_env"] = value
+            with self.assertRaisesRegex(Refused, "Enter a Git token variable name"):
+                save(self.root, payload)
+        self.assertFalse(configuration_path(self.root).exists())
 
     def test_consent_required_and_preset_stays_inert(self):
         payload = self.payload()

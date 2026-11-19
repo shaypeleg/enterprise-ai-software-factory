@@ -26,7 +26,7 @@ ASSETS = Path(__file__).resolve().with_name("setup_ui")
 PRESET = ".factory-settings.json"
 PORTABLE = ("version", "git_url", "base_branch", "scm", "models", "checks", "protected_paths",
             "max_rounds", "agent_timeout_seconds", "check_timeout_seconds")
-SCM_FIELDS = ("provider", "api_url", "repository", "token_env", "queue_label")
+SCM_FIELDS = ("provider", "api_url", "repository", "queue_label")
 
 
 def managed_root():
@@ -135,6 +135,7 @@ def initial(root):
                 message = "Loaded the project preset. Review its endpoints and every check command before saving."
         except (Refused, OSError, ValueError, TypeError, AttributeError, KeyError):
             message = "The project preset could not be loaded. Review or replace it from this wizard."
+    defaults["scm"] = selected_scm(defaults["scm"])
     return {"config": {key: defaults[key] for key in PORTABLE}, "project": str(root),
             "origin": info["git_url"], "originHint": info["origin_hint"],
             "presetMessage": message, "hasConfig": path.is_file(), "roles": list(ROLES),
@@ -143,8 +144,9 @@ def initial(root):
 
 def connection_key(config):
     scm = config["scm"]
+    source = scm.get("credential_source", "environment")
     return (config["git_url"], scm["provider"], scm["api_url"].rstrip("/"),
-            scm["repository"], scm.get("credential_source", "environment"), scm.get("token_env"))
+            scm["repository"], source, scm.get("token_env") if source == "environment" else None)
 
 
 def check_clone(root, git_url, scm):
@@ -157,7 +159,9 @@ def check_clone(root, git_url, scm):
 def selected_scm(scm):
     selected = {key: scm[key] for key in SCM_FIELDS}
     source = scm.get("credential_source", "environment")
-    if source != "environment":
+    if source == "environment":
+        selected["token_env"] = scm["token_env"]
+    else:
         selected["credential_source"] = source
     return selected
 
@@ -202,11 +206,19 @@ def save(root, data):
     if path.is_file():
         previous = load(path)
         candidate = dict(config, state_dir=previous["state_dir"])
-        if candidate == previous:
+        previous_scm = previous["scm"]
+        default_name = f"FACTORY_{config['scm']['provider'].upper()}_TOKEN"
+        had_default_name = (previous_scm.get("credential_source") == "workspace"
+                            and previous_scm.get("token_env") == default_name)
+        if (candidate == previous or (had_default_name and
+                candidate == dict(previous, scm=selected_scm(previous_scm)))):
+            # Preserve state for a legacy workspace setup that saved a harmless variable name.
             config = previous
     if data.get("share") is True:
         # Only portable values. Keep reviewable instructions separate from the executable config.
-        save_json(preset_path(root), {key: config[key] for key in PORTABLE})
+        preset = {key: config[key] for key in PORTABLE}
+        preset["scm"] = selected_scm(config["scm"])
+        save_json(preset_path(root), preset)
     save_json(path, config)
     return {"path": str(path), "shared": data.get("share") is True}
 

@@ -71,7 +71,7 @@
             <p id="permission-target" class="project"></p>
             <p id="permissions"></p>
             <label>Git credential source<select id="credential_source"><option value="workspace">Use workspace Git credentials</option><option value="environment">Use a token environment variable</option></select></label>
-            <label id="token-variable" hidden>Git token environment variable<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" autocomplete="off"></label>
+            <label id="token-variable" hidden>Git token variable name<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" aria-describedby="credential-help" autocomplete="off"></label>
             <p class="hint" id="credential-help"></p>
             <button type="button" class="back" id="test-connection">Test connection</button>
             <p id="connection-status" class="hint" role="status">Connection unverified.</p>
