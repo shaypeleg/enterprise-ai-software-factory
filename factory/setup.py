@@ -10,10 +10,12 @@ import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from .config import Refused, load, require, validate
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
+from .workspace import setup_target
 
 
 SOURCE = Path(__file__).resolve().parent.parent
@@ -155,7 +157,7 @@ def save(root, data):
     return {"path": str(path), "shared": data.get("share") is True}
 
 
-def server_for(root):
+def server_for(root, repositories=None):
     token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -185,12 +187,28 @@ def server_for(root):
         def valid_host(self):
             return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
 
+        def selected_repository(self, query):
+            selections = parse_qs(query).get("repository", [])
+            if selections:
+                require(repositories is not None and len(selections) == 1, "Invalid repository selection.")
+                return setup_target(repositories, selections[0])
+            return root
+
         def do_GET(self):
             if not self.valid_host():
                 return self.reply(403, {"error": "Invalid setup host."})
-            if self.path == "/api/setup" and self.authorized():
+            url = urlsplit(self.path)
+            if url.path == "/api/setup" and self.authorized():
                 try:
-                    return self.reply(200, initial(root))
+                    result = initial(self.selected_repository(url.query))
+                    if repositories is not None:
+                        result["repositories"] = [
+                            {"alias": alias, "available": path is not None,
+                             "configured": bool(path and configuration_path(path).is_file())}
+                            for alias, path in repositories.items()]
+                        result["selected"] = next(alias for alias, path in repositories.items()
+                                                  if path and str(path) == result["project"])
+                    return self.reply(200, result)
                 except (Refused, OSError, ValueError):
                     return self.reply(400, {"error": "Existing settings could not be loaded. Check the local configuration."})
             assets = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
@@ -201,31 +219,40 @@ def server_for(root):
             self.reply(404, {"error": "Setup page unavailable."})
 
         def do_POST(self):
-            if (self.path != "/api/setup" or not self.valid_host() or not self.authorized() or
+            url = urlsplit(self.path)
+            if (url.path not in ("/api/setup", "/api/finish") or not self.valid_host() or not self.authorized() or
                     self.headers.get("Origin") != f"http://127.0.0.1:{self.server.server_port}"):
                 return self.reply(403, {"error": "Open the private setup URL printed in your terminal."})
             if self.server.saved:
                 return self.reply(409, {"error": "Setup is already saved."})
+            if url.path == "/api/finish":
+                if repositories is None or not self.server.configured:
+                    return self.reply(400, {"error": "Save a repository configuration before finishing."})
+                self.server.saved = True
+                return self.reply(200, {})
             try:
                 size = int(self.headers.get("Content-Length", "0"))
                 require(self.headers.get_content_type() == "application/json" and 0 < size <= 65536,
                         "Expected setup JSON under 64 KB.")
-                result = save(root, json.loads(self.rfile.read(size)))
+                path = self.selected_repository(url.query)
+                result = save(path, json.loads(self.rfile.read(size)))
             except Refused as error:
                 return self.reply(400, {"error": str(error)})
             except (ValueError, TypeError, KeyError, AttributeError, OSError):
                 return self.reply(400, {"error": "Could not save settings. Check the inputs and file permissions."})
-            self.server.saved = True
+            self.server.configured.add(result["path"])
+            self.server.saved = repositories is None
             self.reply(200, result)
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     server.timeout = 0.5
     server.saved = False
+    server.configured = set()
     return server, f"http://127.0.0.1:{server.server_port}/#{token}"
 
 
-def serve(root, open_browser=True):
-    server, url = server_for(root)
+def serve(root, open_browser=True, repositories=None):
+    server, url = server_for(root, repositories)
     with server:
         print(f"Open factory setup: {url}", flush=True)
         if open_browser:
@@ -234,6 +261,7 @@ def serve(root, open_browser=True):
         while not server.saved and time.monotonic() < deadline:
             server.handle_request()
         if server.saved:
-            print(f"Configuration saved to {configuration_path(root)}", flush=True)
+            for path in sorted(server.configured):
+                print(f"Configuration saved to {path}", flush=True)
         else:
             raise Refused("Setup expired. Run the setup command again.")

@@ -29,8 +29,10 @@ function notice(text, info = false) {
   messages.classList.toggle('info', info);
 }
 
-async function request(options = {}) {
-  const result = await fetch('/api/setup', {
+async function request(options = {}, endpoint = '/api/setup') {
+  const selected = element('workspace-repository').value;
+  const query = selected && endpoint === '/api/setup' ? `?repository=${encodeURIComponent(selected)}` : '';
+  const result = await fetch(endpoint + query, {
     ...options,
     headers: {'X-Factory-Session': session, ...options.headers},
   });
@@ -131,6 +133,7 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   next.disabled = true;
+  element('workspace-repository').disabled = true;
   element('back').disabled = true;
   next.textContent = 'Saving…';
   try {
@@ -141,11 +144,17 @@ form.addEventListener('submit', async (event) => {
     element('saved-path').textContent = saved.shared
       ? `Private config saved at ${saved.path}. The project preset was also saved.`
       : `Private config saved at ${saved.path}.`;
+    element('finish').hidden = !settings.repositories;
+    element('skill-command').textContent = settings.repositories ? '$factory workspace list' : '$factory';
+    if (settings.repositories) {
+      element('workspace-repository').selectedOptions[0].textContent = repositoryLabel(settings.selected, 'configured');
+    }
     element('saved').querySelector('h2').focus();
   } catch (error) {
     notice(error.message);
   } finally {
     next.disabled = false;
+    element('workspace-repository').disabled = false;
     element('back').disabled = false;
     next.textContent = 'Save configuration';
   }
@@ -154,11 +163,35 @@ form.addEventListener('submit', async (event) => {
 element('back').addEventListener('click', () => { notice(''); showStep(step - 1); });
 element('provider').addEventListener('change', providerChanged);
 
-(async () => {
+function repositoryLabel(alias, state) {
+  return `${alias === '.' ? 'Parent repository' : alias} · ${state}`;
+}
+
+async function loadRepository() {
+  const selector = element('workspace-repository');
+  selector.disabled = true;
+  form.hidden = true;
+  element('saved').hidden = true;
+  document.querySelector('.steps').hidden = false;
+  element('loading').hidden = false;
+  notice('');
   try {
     if (!session) throw new Error('Open the private setup URL printed in your terminal.');
     settings = await request();
     const config = settings.config;
+    if (settings.repositories) {
+      element('repository-choice').hidden = false;
+      selector.replaceChildren();
+      for (const repo of settings.repositories) {
+        const option = document.createElement('option');
+        option.value = repo.alias;
+        option.disabled = !repo.available;
+        const state = !repo.available ? 'checkout required' : repo.configured ? 'configured' : 'setup required';
+        option.textContent = repositoryLabel(repo.alias, state);
+        selector.append(option);
+      }
+      selector.value = settings.selected;
+    }
     element('project').textContent = settings.project;
     element('project').hidden = false;
     element('origin-hint').textContent = settings.originHint;
@@ -167,7 +200,10 @@ element('provider').addEventListener('change', providerChanged);
     for (const key of limits) element(key).value = config[key];
     element('checks').value = config.checks.length ? JSON.stringify(config.checks, null, 2) : '';
     element('protected_paths').value = config.protected_paths.join('\n');
+    element('roles').replaceChildren();
     buildRoleInputs(config.models, settings.roles);
+    element('consent').checked = false;
+    element('share').checked = false;
     describeAccess();
     notice(settings.presetMessage, true);
     showStep(0, false);
@@ -175,6 +211,19 @@ element('provider').addEventListener('change', providerChanged);
   } catch (error) {
     notice(error.message);
   } finally {
+    selector.disabled = false;
     element('loading').hidden = true;
   }
-})();
+}
+
+element('workspace-repository').addEventListener('change', loadRepository);
+element('finish').addEventListener('click', async () => {
+  try {
+    await request({method: 'POST'}, '/api/finish');
+    element('finish').hidden = true;
+    element('repository-choice').hidden = true;
+  } catch (error) {
+    notice(error.message);
+  }
+});
+loadRepository();

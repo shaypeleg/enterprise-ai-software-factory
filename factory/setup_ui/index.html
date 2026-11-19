@@ -27,6 +27,7 @@
     <section class="workspace" aria-labelledby="title">
       <h1 id="title">Configure your factory</h1>
       <p class="intro">Connect a project, assign models, and choose the checks every candidate must pass.</p>
+      <label id="repository-choice" hidden>Workspace repository<select id="workspace-repository"></select></label>
       <p id="project" class="project" hidden></p>
       <nav aria-label="Setup progress" class="steps"><ol>
         <li aria-current="step">Repository</li><li>Models</li><li>Checks &amp; access</li>
@@ -77,8 +78,9 @@
       </form>
       <section id="saved" class="saved" hidden aria-live="polite">
         <h2 tabindex="-1">Configuration saved</h2>
-        <p>Open this project in Codex and select <strong>Factory</strong> from <code>/skills</code>, or type <code>$factory</code>.</p>
+        <p>Open this project in Codex and select <strong>Factory</strong> from <code>/skills</code>, or type <code id="skill-command">$factory</code>.</p>
         <p id="saved-path" class="hint"></p>
+        <button type="button" id="finish" hidden>Finish workspace setup</button>
       </section>
     </section>
   </main>

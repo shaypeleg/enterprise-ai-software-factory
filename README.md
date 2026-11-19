@@ -1,16 +1,66 @@
 # Enterprise AI Software Factory — Codex pilot
 
-A Codex/OpenAI port inspired by the
-[ZazenCodes Claude Code v2 factory](https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2).
-This version supports GitHub and GitLab issue
-queues, produces reviewed candidate changes, and can publish a draft PR/MR.
-It has **no merge, PR approval, or deployment capability**.
+```mermaid
+flowchart TD
+    Issue["1. Select a labeled GitHub or GitLab issue"] --> Intake["2. Pin the base, assess scope, and write the spec"]
+    Intake -->|Accepted and specified| Build["3. Build in a separate Git worktree"]
+    Intake -->|Rejected, unclear, or blocked| Park["Stop and report the reason"]
+    Build --> Gate{"4. Required checks pass?"}
+    Build -->|Builder blocked| Park
+    Gate -->|Yes| Review{"5. Code and security reviews pass?<br/>UI and UX review when applicable"}
+    Gate -->|No| Retry{"Revision rounds left?"}
+    Review -->|Changes requested| Retry
+    Retry -->|Yes, with feedback| Build
+    Retry -->|No| Park
+    Review -->|Pass| Handoff{"6. Handoff confirms the evidence?"}
+    Handoff -->|Blocked| Park
+    Handoff -->|Ready| Candidate["Candidate ready for human review"]
+    Candidate -->|Explicit publish command| Draft["7. Push candidate branch and open draft PR/MR"]
+    Draft -.-> Staging["8. Trusted CI deploys validated artifact to staging"]
+    Staging -.-> Approval["9. Human reviews staging and manually merges"]
+    Approval -.-> Prod["10. Trusted CI promotes the verified artifact"]
+```
 
-**Maturity: tested local foundation, not an enterprise production service.**
-No live model/provider/deployment integration has been verified. See
-[the enterprise acceptance gates](ENTERPRISE.md) before using company code.
-The end-to-end deployment adapter is deliberately unconfigured until the
-deployment platform is chosen.
+Solid arrows are implemented by the factory. Dashed arrows show the release
+process to connect in your own CI. The pilot stops at a local candidate or draft
+PR/MR. [CI integration requirements](ENTERPRISE.md)
+
+## Getting started
+
+1. **Install the skill from your application checkout.** You need macOS or Linux,
+   Git, Python 3.9+, Node.js 18+ with npm, and the OpenAI Codex CLI.
+
+   ```bash
+   cd /path/to/your/application
+   npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install
+   ```
+
+2. **Complete the browser wizard.** Confirm the repository, pick a model, and
+   enter the project’s checks. Set `CODEX_API_KEY` and the GitHub or GitLab token
+   variable shown by the wizard in the environment Codex uses. For a project with
+   several checkouts, add `--workspace` to the install command and configure the
+   repositories you want to use. [Workspace setup](#work-with-multiple-repositories)
+3. **Run an issue in Codex.** Apply the configured queue label to an open issue,
+   then open the same checkout in Codex. Replace `42` with your issue number.
+
+   ```text
+   $factory queue
+   $factory run 42
+   $factory status
+   ```
+
+   Review the local candidate. When you want a draft PR/MR, run
+   `$factory publish 42`. In workspace mode, use
+   `$factory workspace run 42` to start from the parent issue.
+
+## Scope of this pilot
+
+The factory builds reviewed candidates for GitHub and GitLab issues using Codex.
+It can publish draft PRs and MRs. The project takes inspiration from the
+[ZazenCodes Claude Code v2 factory](https://github.com/zazencodes/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2).
+
+This is a local pilot. Production rollout requires worker isolation, live
+provider validation, and CI integration. [Enterprise acceptance gates](ENTERPRISE.md)
 
 ## Runtime support and configuration
 
@@ -25,33 +75,6 @@ timeouts and maximum revision rounds in an operator-owned JSON file. The
 `scm.provider` setting selects the Git hosting provider; it does not select an
 AI runtime. This pilot deliberately refuses configuration that enables factory
 merges or deployments.
-
-## Intended release flow
-
-1. An authorized operator applies a configurable issue label on GitHub or GitLab.
-2. The controller fetches the issue and pins the base commit.
-3. Codex performs intake, specification and implementation in a separate worktree.
-4. Operator-owned checks must pass. Independent code and security reviews must
-   both pass; UI/UX reviewers also run when intake identifies UI work.
-5. A final handoff checks the evidence. Any failure is revised within a bounded
-   round budget or parked for a human. Nothing is published on a failed run.
-6. With publication enabled, the publisher creates a `factory/issue-N` branch
-   and draft PR/MR, recording the exact candidate commit.
-7. **Target integration:** trusted CI independently validates that candidate,
-   builds an immutable artifact and automatically deploys it to staging.
-   A human does not need to authorize staging after the factory's gates pass.
-8. You review the staging result, mark the PR/MR ready and manually merge it.
-   Production CI promotes the verified artifact after validating the merge and
-   staging evidence. The factory cannot approve or perform that merge.
-
-Steps 1–6 are implemented here. Steps 7–8 are a concrete integration contract in
-[ENTERPRISE.md](ENTERPRISE.md), not a working deployment integration.
-
-Use the same PR/MR throughout. A long-lived staging branch adds a second merge
-and makes it harder to prove that production received what was tested. Prefer
-an isolated staging/preview environment per candidate. If there is only one
-shared staging environment, serialize deployments and invalidate the previous
-candidate's sign-off when the environment changes.
 
 ## Requirements
 
@@ -71,13 +94,9 @@ implemented in Python. Model IDs can be configured per role (`intake`, `spec`,
 
 ## Install the skill with npx
 
-Install the [OpenAI Codex CLI](https://developers.openai.com/codex/cli/) if needed.
-In your application’s existing Git checkout, run:
-
-```bash
-cd /path/to/your/application
-npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install
-```
+Use the command in [Getting started](#getting-started) from your application’s
+Git checkout. The [OpenAI Codex CLI](https://developers.openai.com/codex/cli/)
+installation guide covers the required CLI.
 
 Approve npm’s install prompt if it appears. `npx` fetches the installer directly
 from GitHub. The installer keeps the runtime in your user data directory
@@ -160,11 +179,85 @@ The `release_intent` output identifies staging and the exact commit for a future
 trusted deployment adapter. It is **unsigned advisory data, not deployment authorization**.
 
 `queue` is a paginated read of labeled open issues. The controller currently
-processes one explicitly selected issue at a time. An external trusted scheduler
+processes selected issues one at a time. An external trusted scheduler
 can poll this queue, apply authorization/rate limits, and call `run N --publish`.
 There is no public webhook listener or built-in issue-label event daemon yet.
 Never interpolate issue text into shell commands or accept an arbitrary repository
 URL from a webhook. Resolve all work through the operator's allowlisted configuration.
+
+## Work with multiple repositories
+
+Install from the workspace root with `--workspace`:
+
+```bash
+npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install --workspace
+```
+
+The setup wizard lists the parent checkout and its Git submodules. Choose each
+repository you plan to use and save its model, check, queue and credential
+settings. Finish workspace setup when you are done. Initialize any missing
+submodules through your normal Git workflow before selecting them.
+
+For a folder of independent clones, create `.factory-workspace.json` in the
+folder before installing. For example:
+
+```json
+{
+  "repositories": {
+    "backend": "agent-backend",
+    "frontend": "agent-frontend"
+  }
+}
+```
+
+Manifest paths refer to Git checkout roots inside the workspace. A manifest
+controls which child repositories are listed. When the workspace itself is a Git
+checkout, the alias `.` refers to it. Each checkout retains separate private
+settings and job state. You can share its preset through the browser as usual.
+
+In Codex:
+
+```text
+$factory workspace list
+$factory workspace setup
+$factory workspace queue
+$factory workspace status
+$factory workspace run 42
+$factory workspace run agent-backend=17 agent-frontend=23
+$factory workspace publish agent-backend=17 agent-frontend=23
+```
+
+A bare issue number defaults to the parent. To route a parent feature into
+several repositories, add a fenced block like this to its issue description:
+
+````markdown
+```factory-routes
+agent-backend=17
+agent-frontend=23
+```
+````
+
+Label the parent and each linked issue with their repository's configured queue
+label. The factory runs the linked issues in the listed order and reports each
+result separately. Every linked issue should describe the work for its repository.
+An issue without a routing block runs in the parent. Use `.=42` to run just that
+parent issue even if it declares routes. In a folder with no parent Git checkout,
+use repository aliases with issue numbers.
+
+Publishing is explicit. For a routed feature, publish the child issue pairs
+reported by `run`. Each request is published to its own repository. Publication
+stops at the first error and reports any requests already created. Retrying can
+reuse those requests. A parent job can change parent files while retaining the
+existing submodule pins. Updating those pins after child merges and testing the
+combined change in an integration environment remain separate steps.
+
+## Release environments
+
+Use the same PR/MR throughout. A long-lived staging branch adds a second merge
+and makes it harder to prove that production received what was tested. Prefer
+an isolated staging/preview environment per candidate. If there is only one
+shared staging environment, serialize deployments and invalidate the previous
+candidate's sign-off when the environment changes.
 
 ## Recovery and guardrails
 

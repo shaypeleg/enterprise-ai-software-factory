@@ -5,12 +5,90 @@ import shutil
 import sys
 from pathlib import Path
 
-from .config import Refused, load
+from .config import Refused, load, require
 from .engine import Engine, State
 from .project import configuration_path, project_root
 from .runtime import Codex
 from .setup import install_skill, serve
 from .scm import Provider
+from .workspace import configured, discover, select_jobs, setup_target, workspace_root
+
+
+def operate(config, command, issue=None, publish=False):
+    provider = Provider(config["scm"])
+    if command == "queue":
+        return provider.queue()
+    with State(config) as state:
+        executable = shutil.which("codex")
+        if command == "run":
+            require(executable, "install the OpenAI Codex CLI before running agents")
+            print("Local pilot: worktrees and environment filtering are not enterprise isolation.",
+                  file=sys.stderr)
+        engine = Engine(config, state, provider, Codex(config, executable))
+        if command == "status":
+            return state.all()
+        if command == "publish":
+            return engine.publish(issue)
+        result = engine.run(issue)
+        return engine.publish(issue) if publish and result["stage"] == "ready" else result
+
+
+def report(result):
+    print(json.dumps(result, indent=2))
+
+
+def workspace_command(args):
+    root = workspace_root(args.project)
+    repositories = discover(root)
+    action = args.action
+    if action == "setup":
+        require(any(repositories.values()), "Initialize at least one repository first.")
+        selected = args.repository or next(alias for alias, path in repositories.items() if path is not None)
+        serve(setup_target(repositories, selected), open_browser=not args.no_browser,
+              repositories=repositories)
+        return
+    if action == "list":
+        report({alias: {"checkout": str(path) if path else None,
+                        "configured": bool(path and configuration_path(path).is_file())}
+                for alias, path in repositories.items()})
+        return
+    path_results = {}
+    if action in ("run", "publish"):
+        jobs = select_jobs(repositories, args.jobs, follow_parent=action == "run")
+        if action == "publish":
+            for alias, issue, config in jobs:
+                with State(config) as state:
+                    job = state.get(issue)
+                    require(job and job["stage"] in ("ready", "published"), f"{alias} issue #{issue} is not ready to publish.")
+    else:
+        jobs = []
+        for alias, path in repositories.items():
+            if path is None:
+                path_results[alias] = {"status": "checkout-required"}
+            elif not configuration_path(path).is_file():
+                path_results[alias] = {"status": "setup-required"}
+            else:
+                jobs.append((alias, None, configured(path)))
+    results = []
+    failed = False
+    for alias, issue, config in jobs:
+        row = {"repository": alias}
+        if issue is not None:
+            row["issue"] = issue
+        try:
+            row["result"] = operate(config, action, issue)
+        except (Refused, OSError, KeyError, ValueError) as error:
+            row["error"] = str(error)
+            failed = True
+        if issue is None:
+            path_results[alias] = {key: value for key, value in row.items() if key != "repository"}
+        else:
+            results.append(row)
+        if failed and action == "publish":
+            break  # Preserve earlier requests and report exactly what was attempted.
+    report(results if action in ("run", "publish") else path_results)
+    if failed:
+        sys.exit(1)
 
 
 def main():
@@ -23,6 +101,7 @@ def main():
         command.add_argument("--no-browser", action="store_true", help="print the private URL without opening it")
         if name == "install":
             command.add_argument("--managed", action="store_true", help=argparse.SUPPRESS)
+            command.add_argument("--workspace", action="store_true", help="install for a workspace with a repository selector")
     for name in ("validate", "queue", "status"):
         commands.add_parser(name)
     for name in ("run", "publish"):
@@ -30,42 +109,47 @@ def main():
         command.add_argument("issue", type=int)
         if name == "run":
             command.add_argument("--publish", action="store_true", help="publish a passing candidate as a draft PR/MR")
+    workspace = commands.add_parser("workspace", help="work with multiple Git checkouts")
+    actions = workspace.add_subparsers(dest="action", required=True)
+    for action in ("list", "queue", "status"):
+        actions.add_parser(action)
+    setup = actions.add_parser("setup")
+    setup.add_argument("repository", nargs="?")
+    setup.add_argument("--no-browser", action="store_true")
+    for action in ("run", "publish"):
+        operation = actions.add_parser(action)
+        operation.add_argument("jobs", nargs="+", metavar="ISSUE|REPOSITORY=ISSUE")
     args = parser.parse_args()
     os.umask(0o077)
     try:
+        if args.command == "workspace":
+            require(not args.config, "Workspace commands use each checkout’s saved configuration.")
+            workspace_command(args)
+            return
         if args.command in ("install", "setup"):
             if args.config:
                 raise Refused("Browser setup writes the current project’s default private configuration.")
-            root = project_root(args.project)
+            repositories = None
+            if getattr(args, "workspace", False):
+                root = workspace_root(args.project)
+                repositories = discover(root)
+                require(any(repositories.values()), "Initialize at least one repository first.")
+                selected = next(path for path in repositories.values() if path is not None)
+            else:
+                root = selected = project_root(args.project)
             if args.command == "install":
                 target = install_skill(root, managed=args.managed)
                 print(f"Installed Codex skill at {target}", flush=True)
-            serve(root, open_browser=not args.no_browser)
+            serve(selected, open_browser=not args.no_browser, repositories=repositories)
             return
         path = Path(args.config) if args.config else configuration_path(project_root(args.project))
         if not path.is_file():
             raise Refused("No configuration saved. Run the factory setup command first.")
         config = load(path)
-        provider = Provider(config["scm"])
         if args.command == "validate":
             print("Valid local-pilot configuration. No credentials or external services checked.")
             return
-        if args.command == "queue":
-            result = provider.queue()
-        else:
-            with State(config) as state:
-                executable = shutil.which("codex")
-                if args.command == "run":
-                    if not executable:
-                        raise Refused("install the OpenAI Codex CLI before running agents")
-                    print("Local pilot: worktrees and environment filtering are not enterprise isolation.",
-                          file=sys.stderr)
-                engine = Engine(config, state, provider, Codex(config, executable))
-                result = (state.all() if args.command == "status" else
-                          engine.run(args.issue) if args.command == "run" else engine.publish(args.issue))
-                if args.command == "run" and args.publish and result["stage"] == "ready":
-                    result = engine.publish(args.issue)
-        print(json.dumps(result, indent=2))
+        report(operate(config, args.command, getattr(args, "issue", None), getattr(args, "publish", False)))
     except (Refused, KeyError, OSError, ValueError) as error:
         print("factory: " + str(error), file=sys.stderr)
         sys.exit(1)

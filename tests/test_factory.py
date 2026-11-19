@@ -94,6 +94,23 @@ class EngineTests(unittest.TestCase):
         events = self.state.db.execute("SELECT event FROM events").fetchall()
         self.assertIn(("gate-pass",), events)
 
+    def test_parent_candidate_preserves_unchanged_submodule_pointer(self):
+        git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{self.base},backend")
+        git(self.repo, "commit", "-m", "Pin backend")
+        self.base = git(self.repo, "rev-parse", "HEAD")
+        self.new_job()
+        job = self.engine.run(7)
+        self.assertEqual(job["stage"], "ready")
+        worktree = self.engine.path(job)
+        git(worktree, "add", "calc.py")
+        tree = git(worktree, "write-tree")
+        job["commit"] = git(worktree, "commit-tree", tree, "-p", self.base, "-m", "Candidate")
+        git(worktree, "reset", "HEAD", "--", "calc.py")
+        self.assertEqual(self.engine.commit_fingerprint(job), job["fingerprint"])
+        git(worktree, "update-index", "--force-remove", "backend")
+        with self.assertRaisesRegex(Refused, "index changed"):
+            self.engine.fingerprint(job)
+
     def test_gate_failure_never_runs_review_and_exhausts_rounds(self):
         self.config["checks"] = [["python3", "-c", "raise SystemExit(1)"]]
         job = self.engine.run(7)

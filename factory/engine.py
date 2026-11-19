@@ -19,7 +19,7 @@ from .runtime import clean_env, execute
 
 
 PROTECTED = (".git*", ".github/**", ".gitlab/**", ".codex/**", ".agents/**",
-             "AGENTS.md", "**/AGENTS.md", ".factory-settings.json", "factory/**")
+             "AGENTS.md", "**/AGENTS.md", ".factory-settings.json", ".factory-workspace.json", "factory/**")
 STOP = {"ready", "needs-human", "needs-info", "rejected", "published"}
 
 
@@ -140,26 +140,44 @@ class Engine:
         expected = job["base"]
         require(self.git(path, "rev-parse", "HEAD").stdout.decode().strip() == expected,
                 "candidate HEAD changed unexpectedly")
-        require(self.git(path, "diff", "--cached", "--quiet", check=False).returncode == 0,
+        require(self.git(path, "diff", "--cached", "--quiet", "--ignore-submodules=none",
+                         check=False).returncode == 0,
                 "candidate index changed unexpectedly")
 
     def changed(self, job):
         path = self.path(job)
         tracked = self.git(path, "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z",
-                           "--no-renames", job["base"], "--").stdout
+                           "--no-renames", "--ignore-submodules=none", job["base"], "--").stdout
         others = self.git(path, "ls-files", "--others", "--exclude-standard", "-z").stdout
         return sorted(set(os.fsdecode(p) for p in (tracked + others).split(b"\0") if p))
+
+    def gitlink_entries(self, path):
+        entries = self.git(path, "ls-files", "--stage", "-z").stdout
+        links = {}
+        for entry in entries.split(b"\0"):
+            if entry.startswith(b"160000 "):
+                metadata, name = entry.split(b"\t", 1)
+                _, oid, stage = metadata.split()
+                require(stage == b"0", "Unmerged submodule entry requires manual handling")
+                links[name] = oid.decode()
+        return links
 
     def fingerprint(self, job):
         self.verify_candidate(job)
         root = self.path(job)
         names = self.git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z").stdout
         digest = hashlib.sha256()
+        links = self.gitlink_entries(root)
         for name in sorted(set(p for p in names.split(b"\0") if p)):
             path = root / os.fsdecode(name)
             require(not any(parent.is_symlink() for parent in path.parents if parent != root
                             and root in parent.parents), "symlinked candidate directory is unsafe")
-            if path.is_symlink():
+            if name in links:
+                require(not path.is_symlink() and (not path.exists() or
+                        (path.is_dir() and not any(path.iterdir()))),
+                        "Parent worktrees leave submodules uninitialized. Run the child as a separate job.")
+                record = [os.fsdecode(name), "gitlink", links[name]]
+            elif path.is_symlink():
                 record = [os.fsdecode(name), "symlink", os.readlink(path)]
             elif path.is_file():
                 content = hashlib.sha256()
@@ -183,7 +201,10 @@ class Engine:
                 continue
             metadata, name = entry.split(b"\t", 1)
             mode, kind, oid = metadata.split()
-            require(kind == b"blob", "submodules require manual publication")
+            if mode == b"160000" and kind == b"commit":
+                records.append((name, [os.fsdecode(name), "gitlink", oid.decode()]))
+                continue
+            require(kind == b"blob", "Unexpected Git tree entry")
             blob = self.git(path, "cat-file", "blob", oid.decode()).stdout
             record = ([os.fsdecode(name), "symlink", os.fsdecode(blob)] if mode == b"120000"
                       else [os.fsdecode(name), mode == b"100755", hashlib.sha256(blob).hexdigest()])
@@ -198,6 +219,8 @@ class Engine:
         protected = PROTECTED + tuple(self.config["protected_paths"])
         hits = [p for p in changed if any(fnmatch.fnmatchcase(p, pattern) for pattern in protected)]
         require(not hits, "protected paths changed: " + ", ".join(hits))
+        gitlinks = {os.fsdecode(name) for name in self.gitlink_entries(self.path(job))}
+        require(not gitlinks.intersection(changed), "Submodule pointers require a separate human change.")
         require(not any((self.path(job) / p).is_symlink() for p in changed),
                 "new or changed symlinks require manual handling")
         return changed
