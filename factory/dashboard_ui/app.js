@@ -25,7 +25,7 @@ const events = {created: 'Run created', transition: 'Stage changed', 'base-pinne
   'unexpected-candidate-mutation': 'Candidate changed unexpectedly'};
 const dateTime = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit'});
 const displayName = (name) => name === '.' ? 'Parent' : name;
-const runKey = ({name, number}) => JSON.stringify([name, number]);
+const runKey = ({name, id, number}) => JSON.stringify([name, id ?? number]);
 let repositories = [];
 let selection = null;
 let boardStamp = '';
@@ -146,7 +146,8 @@ function renderCard(job) {
   button.type = 'button';
   button.dataset.run = runKey(job);
   button.setAttribute('aria-haspopup', 'dialog');
-  const identity = repositories.length > 1 ? `${displayName(job.name)} · #${job.number}` : `#${job.number}`;
+  const issueLabel = job.workspace_task ? `Parent #${job.number}` : `#${job.number}`;
+  const identity = repositories.length > 1 ? `${displayName(job.name)} · ${issueLabel}` : issueLabel;
   button.append(node('span', identity, 'identity'), node('strong', job.title));
   button.addEventListener('click', () => {
     selection = job;
@@ -216,7 +217,7 @@ function focusCard(key) {
   Array.from(el('board').querySelectorAll('button')).find((button) => button.dataset.run === key)?.focus();
 }
 
-function renderDetail({job, rounds, events: entries}) {
+function renderDetail({job, rounds, events: entries, agents = {}, planner_id: plannerId}) {
   const meta = node('p', `${stageLabel(job)} · Round ${job.round}${job.risk ? ` · ${job.risk} risk` : ''}`, 'run-meta');
   const links = linksFor(job, true);
   const detail = el('detail');
@@ -225,7 +226,9 @@ function renderDetail({job, rounds, events: entries}) {
   const scroll = detail.scrollTop;
   const evidence = node('section', '', 'evidence');
   evidence.append(node('h3', 'Checks and reviews by round'));
-  for (const [number, reports] of Object.entries(rounds).reverse()) {
+  const roundNumbers = [...new Set([...Object.keys(rounds), ...Object.keys(agents)])].sort((a, b) => b - a);
+  for (const number of roundNumbers) {
+    const reports = rounds[number] ?? {};
     const details = node('details');
     details.dataset.round = number;
     details.open = openRounds.get(number) ?? (number === String(job.round));
@@ -236,11 +239,14 @@ function renderDetail({job, rounds, events: entries}) {
     }
     details.append(tags);
     for (const role of Object.keys(roles)) {
-      if (reports[role]?.report) details.append(node('h4', roles[role]), node('pre', reports[role].report));
+      const ids = agents[number]?.[role] ?? [];
+      if (reports[role]?.report || ids.length) details.append(node('h4', roles[role]));
+      if (ids.length) details.append(agentTrace('Agent IDs', ids));
+      if (reports[role]?.report) details.append(node('pre', reports[role].report));
     }
     evidence.append(details);
   }
-  if (!Object.keys(rounds).length) evidence.append(node('p', 'Results appear here as each stage finishes.', 'run-meta'));
+  if (!roundNumbers.length) evidence.append(node('p', 'Results appear here as each stage finishes.', 'run-meta'));
   const activity = node('section', '', 'evidence');
   activity.append(node('h3', 'Recent activity'));
   const history = node('ol', '', 'history');
@@ -248,6 +254,7 @@ function renderDetail({job, rounds, events: entries}) {
     let label = events[event] || event;
     if (event.startsWith('stage-')) label = `${roles[event.slice(6)] || stage} recorded`;
     if (event.startsWith('started-')) label = `${roles[event.slice(8)] || stage} started`;
+    if (event.startsWith('agent-')) label = `${roles[event.slice(6)] || stage} agent recorded`;
     const row = node('li');
     const date = new Date(at);
     const time = node('time', Number.isNaN(date.getTime()) ? '' : dateTime.format(date));
@@ -256,7 +263,8 @@ function renderDetail({job, rounds, events: entries}) {
     history.append(row);
   }
   activity.append(history);
-  detail.replaceChildren(meta, ...(links ? [links] : []), evidence, activity);
+  detail.replaceChildren(meta, ...(links ? [links] : []),
+    ...(plannerId ? [agentTrace('Planning agent', [plannerId])] : []), evidence, activity);
   if (focusedRound) {
     Array.from(detail.querySelectorAll('details')).find((entry) => entry.dataset.round === focusedRound)
       ?.querySelector('summary')?.focus({preventScroll: true});
@@ -264,12 +272,18 @@ function renderDetail({job, rounds, events: entries}) {
   detail.scrollTop = scroll;
 }
 
+function agentTrace(label, ids) {
+  const trace = node('p', label, 'agent-trace run-meta');
+  for (const id of ids) trace.append(node('code', id));
+  return trace;
+}
+
 async function showSelected() {
   const target = selection;
   if (!target || !drawer.open) return;
   const stamp = JSON.stringify([runKey(target), target.updated, target.active_role]);
   if (stamp === detailStamp) return;
-  const params = new URLSearchParams({repository: target.name, issue: String(target.number)});
+  const params = new URLSearchParams({repository: target.name, issue: String(target.id ?? target.number)});
   try {
     const payload = await read(`/api/run?${params}`);
     if (selection !== target || !drawer.open) return;

@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import Refused, load
-from .engine import review_roles
+from .engine import job_id, review_roles
 from .local_ui import LocalHandler, private_url
 
 
@@ -29,7 +29,8 @@ def database(settings):
 def summarize(job, when=None, last_event=None, started=None, active=False):
     issue = job["issue"]
     role = last_event.removeprefix("started-") if last_event else None
-    return {"number": issue["number"], "title": issue["title"], "issue_url": issue.get("url"),
+    return {"id": job_id(job), "number": issue["number"], "title": issue["title"], "issue_url": issue.get("url"),
+            "workspace_task": bool(issue.get("workspace_parent")),
             "request_url": job.get("request_url"), "stage": job["stage"], "round": job["round"],
             "risk": job["results"].get("intake", {}).get("risk"), "updated": when, "last_event": last_event,
             "started": started, "active_role": role if active and role in ROLES else None,
@@ -105,7 +106,8 @@ def run_detail(settings, number):
     latest = timeline[-1] if timeline else {}
     started = created[0] if created else None
     return {"job": summarize(job, latest.get("at"), latest.get("event"), started, active),
-            "started": started, "rounds": attempts, "events": timeline}
+            "started": started, "rounds": attempts, "events": timeline,
+            "agents": job.get("agents", {}), "planner_id": job.get("planner_id")}
 
 
 def recorded_results(events, include_reports=True):
@@ -159,7 +161,7 @@ def server_for(project, repositories):
                     name, = fields["repository"]
                     value, = fields["issue"]
                     number = int(value)
-                    if number <= 0 or number > 2**63 - 1:
+                    if number == 0 or abs(number) > 2**63 - 1:
                         raise ValueError
                     detail = run_detail(repositories[name], number)
                 except (KeyError, ValueError):

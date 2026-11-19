@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 
+from .cascade import jobs_for_command, update_ticket
 from .config import Refused, load, require
 from .dashboard import serve_dashboard
 from .engine import Engine, State
@@ -11,10 +12,10 @@ from .project import configuration_path, project_root
 from .runtime import Codex, codex_executable
 from .setup import install_skill, serve
 from .scm import Provider
-from .workspace import configured, discover, select_jobs, setup_start, setup_target, workspace_root
+from .workspace import configured, discover, setup_start, setup_target, workspace_root
 
 
-def operate(config, command, issue=None, publish=False):
+def operate(config, command, issue=None, publish=False, route=None):
     provider = Provider(config["scm"], checkout=config["checkout"], git_url=config["git_url"])
     if command == "queue":
         return provider.queue()
@@ -28,9 +29,9 @@ def operate(config, command, issue=None, publish=False):
         if command == "status":
             return state.all()
         if command == "publish":
-            return engine.publish(issue)
-        result = engine.run(issue)
-        return engine.publish(issue) if publish and result["stage"] == "ready" else result
+            return engine.publish(issue, route=route)
+        result = engine.run(issue, route=route)
+        return engine.publish(issue, route=route) if publish and result["stage"] == "ready" else result
 
 
 def report(result):
@@ -57,11 +58,11 @@ def workspace_command(args):
         return
     path_results = {}
     if action in ("run", "publish"):
-        jobs = select_jobs(repositories, args.jobs, follow_parent=action == "run")
+        jobs = jobs_for_command(repositories, args.jobs, action)
         if action == "publish":
-            for alias, issue, config in jobs:
+            for alias, issue, config, route in jobs:
                 with State(config) as state:
-                    job = state.get(issue)
+                    job = state.get(-issue if route else issue)
                     require(job and job["stage"] in ("ready", "published"), f"{alias} issue #{issue} is not ready to publish.")
     else:
         jobs = []
@@ -71,15 +72,21 @@ def workspace_command(args):
             elif not configuration_path(path).is_file():
                 path_results[alias] = {"status": "setup-required"}
             else:
-                jobs.append((alias, None, configured(path)))
+                jobs.append((alias, None, configured(path), None))
     results = []
     failed = False
-    for alias, issue, config in jobs:
+    notes = {}
+    for alias, issue, config, route in jobs:
         row = {"repository": alias}
         if issue is not None:
             row["issue"] = issue
+        if route:
+            row["parent_issue_url"] = route.source["url"]
+            note = notes.setdefault((route.parent_git_url, issue), (route, []))[1]
+            note.append((config["scm"]["repository"], row))
         try:
-            row["result"] = operate(config, action, issue)
+            route_option = {"route": route} if route else {}
+            row["result"] = operate(config, action, issue, **route_option)
         except (Refused, OSError, KeyError, ValueError) as error:
             row["error"] = str(error)
             failed = True
@@ -89,6 +96,15 @@ def workspace_command(args):
             results.append(row)
         if failed and action == "publish":
             break  # Preserve earlier requests and report exactly what was attempted.
+    for route, rows in notes.values():
+        if action == "publish" and failed:
+            continue  # Keep the complete run note when publishing stopped partway through the batch.
+        try:
+            update_ticket(route, [(repo, row.get("result", {}).get("stage")) for repo, row in rows])
+        except (Refused, OSError, KeyError, ValueError) as error:
+            for _, row in rows:
+                row["parent_note_error"] = str(error)
+            failed = True
     report(results if action in ("run", "publish") else path_results)
     if failed:
         sys.exit(1)

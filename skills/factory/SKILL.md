@@ -20,9 +20,9 @@ For a workspace, add `workspace` after the launcher. Run from the workspace root
 - `$factory workspace list`, `queue`, or `status`: list repositories, their labeled issues, or their jobs.
 - `$factory workspace setup`: open the browser repository selector. An optional repository alias selects the first form to show.
 - `$factory workspace dashboard`: open the live dashboard across workspace repositories. Keep the local process running, as for the single-repository dashboard.
-- `$factory workspace run 42`: start at parent issue 42. The launcher follows its structured `factory-routes` block when present. Each listed child issue must separately qualify for its own queue.
+- `$factory workspace run 42`: start at labeled parent issue 42. If it has no `factory-routes` block, plan changes across configured repositories, run local candidates and update one status note on the parent issue. Child issues and labels are unnecessary for this mode. An explicit `factory-routes` block instead selects existing child issues, which must qualify for their own queues.
 - `$factory workspace run agent-backend=17 agent-frontend=23`: target named issues directly. Use `.=42` to run only the parent job without following routes.
-- `$factory workspace publish agent-backend=17`: publish a verified candidate only on explicit request. For a routed feature, use the child repository and issue pairs printed by `run`.
+- `$factory workspace publish 42`: publish a completed automatic cascade only on explicit request. For explicit routes, use the child repository and issue pairs printed by `run`.
 
 Pass workspace selectors as separate, quoted arguments. Report results by repository and issue. If the user asks to run a cross-repository change, use declared routes or their explicit selectors.
 

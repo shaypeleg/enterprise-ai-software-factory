@@ -108,3 +108,18 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(reply.call_args.args[0], 404)
             handler.do_POST()
             self.assertEqual(reply.call_args.args[0], 405)
+
+    def test_workspace_tasks_are_distinct_and_expose_agent_ids_in_the_drawer(self):
+        with State(self.config) as state:
+            state.save(self.job, "created")
+            task = dict(self.job, id=-12, planner_id="planner-thread",
+                        issue=dict(self.job["issue"], workspace_parent="https://example.com/parent.git"),
+                        agents={"1": {"build": ["build-attempt"]}})
+            state.save(task, "agent-build")
+        by_id = {job["id"]: job for job in list_runs(self.settings)}
+        self.assertEqual(set(by_id), {-12, 12})
+        self.assertTrue(by_id[-12]["workspace_task"])
+        self.assertFalse(by_id[12]["workspace_task"])
+        detail = run_detail(self.settings, -12)
+        self.assertEqual(detail["planner_id"], "planner-thread")
+        self.assertEqual(detail["agents"], {"1": {"build": ["build-attempt"]}})

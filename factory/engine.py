@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import Refused, require
 from .credentials import repository_credential
 from .project import discovered_remote
-from .runtime import clean_env, execute
+from .runtime import clean_env, execute, recorded_agent_id
 from .workspace import workspace_models, workspace_parent
 
 
@@ -30,6 +30,10 @@ def review_roles(job):
     if "ui" in job["results"].get("intake", {}).get("surfaces", ()):
         roles += ("ux", "ui")
     return roles
+
+
+def job_id(job):
+    return job.get("id", job["issue"]["number"])
 
 
 class State:
@@ -50,6 +54,7 @@ class State:
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS workspace_plans (issue INTEGER PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (
                 sequence INTEGER PRIMARY KEY, job INTEGER NOT NULL,
                 at TEXT NOT NULL, event TEXT NOT NULL, value TEXT NOT NULL
@@ -80,9 +85,17 @@ class State:
     def save(self, job, event):
         value = json.dumps(job, sort_keys=True)
         with self.db:
-            self.db.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?)", (job["issue"]["number"], value))
+            self.db.execute("INSERT OR REPLACE INTO jobs VALUES (?, ?)", (job_id(job), value))
             self.db.execute("INSERT INTO events(job, at, event, value) VALUES (?, ?, ?, ?)",
-                            (job["issue"]["number"], datetime.now(timezone.utc).isoformat(), event, value))
+                            (job_id(job), datetime.now(timezone.utc).isoformat(), event, value))
+
+    def workspace_plan(self, number):
+        row = self.db.execute("SELECT value FROM workspace_plans WHERE issue=?", (number,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_workspace_plan(self, number, plan):
+        with self.db:
+            self.db.execute("INSERT INTO workspace_plans VALUES (?, ?)", (number, json.dumps(plan)))
 
     def all(self):
         return [json.loads(row[0]) for row in self.db.execute("SELECT value FROM jobs ORDER BY id")]
@@ -133,7 +146,7 @@ class Engine:
         return remote
 
     def path(self, job):
-        return self.state.root / "worktrees" / str(job["issue"]["number"])
+        return self.state.root / "worktrees" / str(job_id(job))
 
     def prepare(self, job, origin):
         worktree = self.path(job)
@@ -249,12 +262,18 @@ class Engine:
         context = {"issue": job["issue"], "base_commit": job["base"], "round": job["round"],
                    "results": job["results"], "policy": {"protected_paths": list(PROTECTED)
                    + self.config["protected_paths"], "merge": "human only", "deploy": "CI only"}}
-        directory = self.state.root / "artifacts" / str(job["issue"]["number"]) / str(job["round"])
+        directory = self.state.root / "artifacts" / str(job_id(job)) / str(job["round"])
         try:
             self.state.save(job, "started-" + role)
             model_settings = {"models": job["models"]} if "models" in job else {}
             result = self.runtime.run(role, self.path(job), context, directory, **model_settings)
         finally:
+            identifier = recorded_agent_id(directory / (role + ".jsonl"))
+            if identifier:
+                attempts = job.setdefault("agents", {}).setdefault(str(job["round"]), {}).setdefault(role, [])
+                if identifier not in attempts:
+                    attempts.append(identifier)
+                    self.state.save(job, "agent-" + role)
             if role != "build":
                 try:
                     require(before == self.fingerprint(job), "read-only stage modified the candidate")
@@ -271,7 +290,7 @@ class Engine:
         before = self.fingerprint(job)
         changed = self.safe_paths(job)
         require(changed, "builder produced no changes")
-        directory = self.state.root / "artifacts" / str(job["issue"]["number"]) / str(job["round"])
+        directory = self.state.root / "artifacts" / str(job_id(job)) / str(job["round"])
         directory.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="checks-", dir=directory) as home:
             for index, command in enumerate(self.config["checks"]):
@@ -291,19 +310,23 @@ class Engine:
         job["results"]["feedback"] = why
         self.state.save(job, "revision-required")
 
-    def run(self, number):
+    def run(self, number, route=None):
         origin = self.verify_checkout()
-        current = self.provider.issue(number)  # Recheck open/label before any resumed work.
-        job = self.state.get(number)
+        current = route.current_issue() if route else self.provider.issue(number)
+        job = self.state.get(-number if route else number)
         if not job:
             job = {"issue": current, "branch": "factory/issue-" + str(number), "stage": "intake",
                    "round": 1, "results": {}}
+            if route:
+                job.update(id=-number, branch=route.branch, planner_id=route.planner_id)
             if self.config.get("model_source") == "workspace":
                 job["models"] = workspace_models(workspace_parent(self.checkout))
             self.state.save(job, "created")
-        if job["stage"] in STOP:
+        if job["stage"] in STOP and not route:
             return job
         require(current == job["issue"], "issue changed; inspect it and use a fresh state_dir")
+        if job["stage"] in STOP:
+            return job
         self.prepare(job, origin)
         try:
             while job["stage"] not in STOP:
@@ -342,14 +365,15 @@ class Engine:
             raise
         return job
 
-    def publish(self, number):
+    def publish(self, number, route=None):
         self.verify_checkout()
-        job = self.state.get(number)
+        job = self.state.get(-number if route else number)
         require(job is not None, "unknown job")
         if job["stage"] == "published":
             return job
         require(job["stage"] == "ready", "only a ready candidate can be published")
-        require(self.provider.issue(number) == job["issue"], "issue changed since review")
+        current = route.current_issue() if route else self.provider.issue(number)
+        require(current == job["issue"], "issue changed since review")
         require(self.fingerprint(job) == job["fingerprint"], "candidate changed since review")
         self.safe_paths(job)
         # Refuse stale bases: re-running tests on a different tree is a new candidate.

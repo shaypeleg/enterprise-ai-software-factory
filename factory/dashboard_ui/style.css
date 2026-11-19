@@ -106,6 +106,7 @@ select { max-width: 100%; }
 .evidence h4 { margin: 12px 0 3px; font-size: .85rem; }
 .evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .85rem/1.55 system-ui, sans-serif; color: var(--muted); margin: 0 0 10px; }
 .verdicts { display: flex; flex-wrap: wrap; gap: 4px; }
+.agent-trace { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-block: 5px; overflow-wrap: anywhere; }
 .history { list-style: none; padding: 0; margin: 0; }
 .history li { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; column-gap: 10px; border-top: 1px solid var(--line); padding-block: 6px; font-size: .85rem; }
 .history time { color: var(--muted); font: .7rem var(--mono); }

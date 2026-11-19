@@ -300,8 +300,21 @@ $factory workspace run agent-backend=17 agent-frontend=23
 $factory workspace publish agent-backend=17 agent-frontend=23
 ```
 
-A bare issue number defaults to the parent. To route a parent feature into
-several repositories, add a fenced block like this to its issue description:
+For automatic routing, write the feature and acceptance criteria in one parent
+issue, apply the parent repository’s queue label, and run
+`$factory workspace run 42`. The factory plans which configured repositories
+need changes, records a local task for each and updates one note on the parent
+issue with their outcomes. You only need the parent issue and its label. The
+dashboard identifies the child cards by parent issue and shows the Codex thread
+IDs recorded for each model stage. Start the command after labeling the issue.
+
+Use `$factory workspace publish 42` to publish all verified candidates from an
+automatic cascade. It requires every planned task to be ready or already
+published. Draft PRs/MRs link to the parent issue so each repo's changes can be
+reviewed independently.
+
+To route to existing child tickets explicitly, add a fenced block to the
+parent issue description:
 
 ````markdown
 ```factory-routes
@@ -313,9 +326,9 @@ agent-frontend=23
 Label the parent and each linked issue with their repository's configured queue
 label. The factory runs the linked issues in the listed order and reports each
 result separately. Every linked issue should describe the work for its repository.
-An issue without a routing block runs in the parent. Use `.=42` to run just that
-parent issue even if it declares routes. In a folder with no parent Git checkout,
-use repository aliases with issue numbers.
+Use `.=42` to run just the parent, bypassing workspace planning and explicit
+routes. In a folder with no parent Git checkout, use repository aliases with
+issue numbers.
 
 Publishing is explicit. For a routed feature, publish the child issue pairs
 reported by `run`. Each request is published to its own repository. Publication

@@ -108,12 +108,32 @@ class Provider:
         if existing:
             require(existing["state"] in ("open", "opened"), "existing PR/MR is closed; inspect manually")
             return existing
-        body = ("Closes #%s\n\nFactory checks and reviews passed. Trusted CI may deploy this "
+        reference = f"Part of {issue['url']}" if issue.get("workspace_parent") else f"Closes #{issue['number']}"
+        body = (f"{reference}\n\nFactory checks and reviews passed. Trusted CI may deploy this "
                 "candidate to staging automatically. Production requires human review and a "
-                "manual merge. This publisher performed no deployment." % issue["number"])
+                "manual merge. This publisher performed no deployment.")
         title = issue["title"][:200]
         data = ({"title": title, "body": body, "head": branch, "base": base, "draft": True}
                 if self.github else {"title": "Draft: " + title, "description": body,
                 "source_branch": branch, "target_branch": base, "remove_source_branch": False})
         # No POST retry: after an ambiguous failure, the next invocation reconciles by branch.
         return self.request("POST", self.project + ("/pulls" if self.github else "/merge_requests"), data)
+
+    def update_workspace_note(self, number, message):
+        marker = "<!-- enterprise-ai-software-factory:workspace-cascade -->"
+        body = marker + "\n" + message
+        path = f"/issues/{number}/" + ("comments" if self.github else "notes")
+        identity = self.request("GET", "/user")["id"]
+        require(type(identity) is int and identity > 0, "Could not verify the factory’s Git identity.")
+        author_field = "user" if self.github else "author"
+        notes = [note for note in self.pages(path, {})
+                 if (note.get(author_field) or {}).get("id") == identity
+                 and (note.get("body") or "").startswith(marker + "\n")]
+        require(len(notes) <= 1, "Multiple factory workspace notes exist. Inspect the parent issue.")
+        if not notes:
+            self.request("POST", self.project + path, {"body": body})
+        elif notes[0]["body"] != body:
+            note_id = notes[0]["id"]
+            require(type(note_id) is int and note_id > 0, "Invalid workspace note ID.")
+            edit_path = f"/issues/comments/{note_id}" if self.github else f"{path}/{note_id}"
+            self.request("PATCH" if self.github else "PUT", self.project + edit_path, {"body": body})

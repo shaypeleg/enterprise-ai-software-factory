@@ -108,6 +108,51 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(self.state.get(number)["models"], {"default": expected})
         self.assertEqual(resolve.call_count, 2)
 
+    def test_interrupted_agent_ids_are_kept_when_the_stage_retries(self):
+        def run(role, worktree, context, directory):
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / "intake.jsonl"
+            identifier = next(identifiers)
+            path.write_text(json.dumps({"type": "thread.started", "thread_id": identifier}) + "\n")
+            if identifier == "intake-first":
+                raise Refused("interrupted")
+            return {"verdict": "NEEDS-INFO", "report": "Please supply context.", "risk": "low", "surfaces": []}
+
+        identifiers = iter(["intake-first", "intake-second"])
+        with patch.object(self.runtime, "run", side_effect=run):
+            with self.assertRaisesRegex(Refused, "interrupted"):
+                self.engine.run(7)
+            first = self.state.get(7)
+            self.assertEqual(first["agents"]["1"]["intake"], ["intake-first"])
+            result = self.engine.run(7)
+        self.assertEqual(result["stage"], "needs-info")
+        self.assertEqual(result["agents"]["1"]["intake"], ["intake-first", "intake-second"])
+
+    def test_routed_job_uses_parent_issue_without_overwriting_same_number_in_child(self):
+        from factory.cascade import RoutedTask
+
+        parent_issue = dict(self.provider.current, url="https://example.com/team/parent/-/issues/7")
+        parent_provider = FakeProvider()
+        parent_provider.current = parent_issue
+        route = RoutedTask(parent_provider, parent_issue, "https://example.com/team/parent.git",
+                           "Implement the repository-specific calculation.", "planner-thread")
+        original_prepare = self.engine.prepare
+
+        def prepare(job, origin):
+            job["base"] = self.base
+            original_prepare(job, origin)
+
+        with (patch.object(self.engine, "prepare", side_effect=prepare),
+              patch.object(self.provider, "issue", side_effect=AssertionError("child issue was read"))):
+            job = self.engine.run(7, route=route)
+        self.assertEqual(job["stage"], "ready")
+        self.assertEqual(job["id"], -7)
+        self.assertEqual(job["issue"]["url"], parent_issue["url"])
+        self.assertEqual(job["planner_id"], "planner-thread")
+        self.assertEqual(job["branch"], route.branch)
+        self.assertEqual(self.state.get(7)["stage"], "intake")
+        self.assertEqual(self.state.get(-7)["stage"], "ready")
+
     def test_authenticated_git_uses_workspace_credential(self):
         self.config["scm"]["credential_source"] = "workspace"
         git(self.repo, "config", "credential.helper", "")
@@ -443,6 +488,42 @@ class AdapterTests(unittest.TestCase):
         provider.create_request({"number": 7, "title": "Feature"}, "factory/issue-7", "develop")
         self.assertEqual(calls[0][2]["title"], "Draft: Feature")
         self.assertEqual(calls[0][2]["target_branch"], "develop")
+
+    def test_workspace_merge_request_links_parent_without_closing_a_local_issue(self):
+        provider = self.provider("gitlab")
+        provider.pages = lambda *args: iter([])
+        issue = {"number": 7, "title": "Feature", "workspace_parent": "https://example.com/team/parent.git",
+                 "url": "https://example.com/team/parent/-/issues/7"}
+        with patch.object(provider, "request") as request:
+            provider.create_request(issue, "factory/workspace-example-issue-7", "develop")
+        self.assertTrue(request.call_args.args[2]["description"].startswith("Part of " + issue["url"]))
+        self.assertNotIn("Closes #7", request.call_args.args[2]["description"])
+
+    def test_cascade_note_is_updated_only_for_its_authenticated_author(self):
+        for kind, field, edit in (("github", "user", "PATCH"), ("gitlab", "author", "PUT")):
+            with self.subTest(kind=kind):
+                provider = self.provider(kind)
+                notes = []
+                writes = []
+                provider.pages = lambda *args: iter(notes)
+
+                def request(method, path, data=None):
+                    if method == "GET":
+                        return {"id": 12}
+                    writes.append((method, path, data))
+                    if method == "POST":
+                        notes.append({"id": 23, field: {"id": 12}, "body": data["body"]})
+                    else:
+                        notes[-1]["body"] = data["body"]
+
+                provider.request = request
+                provider.update_workspace_note(7, "Planned")
+                notes.insert(0, dict(notes[0], id=99, **{field: {"id": 44}}))
+                provider.update_workspace_note(7, "Ready")
+                provider.update_workspace_note(7, "Ready")
+                self.assertEqual([method for method, _, _ in writes], ["POST", edit])
+                self.assertTrue(writes[-1][1].endswith("/23"))
+                self.assertTrue(notes[0]["body"].endswith("Planned"))
 
     def test_post_is_not_retried(self):
         provider = self.provider("github")

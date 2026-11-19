@@ -9,7 +9,9 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from factory.__main__ import workspace_command
+from factory.cascade import cascade_jobs
 from factory.config import Refused
+from factory.engine import State
 from factory.workspace import discover, select_jobs, workspace_root
 
 
@@ -98,3 +100,69 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual([call.args for call in run.call_args_list],
                              [({"scm": {}, "path": backend}, "run", 17),
                               ({"scm": {}, "path": frontend}, "run", 23)])
+
+    def test_workspace_cascade_uses_one_issue_and_one_durable_plan(self):
+        parent = self.repository("parent")
+        backend = self.repository("parent/backend")
+        frontend = self.repository("parent/frontend")
+        records = {".": parent, "be": backend, "fe": frontend}
+        configs = {path: {"checkout": str(path), "git_url": f"https://example.com/team/{path.name}.git",
+                          "scm": {"repository": f"team/{path.name}"},
+                          "state_dir": str(self.directory / (path.name + "-state"))}
+                   for path in records.values()}
+        issue = {"number": 42, "title": "Add report status", "body": "Expose status and show it in the UI.",
+                 "url": "https://example.com/team/parent/-/issues/42"}
+        args = Namespace(project=parent, action="run", jobs=["42"])
+        with (patch("factory.__main__.workspace_root", return_value=parent),
+              patch("factory.__main__.discover", return_value=records),
+              patch("factory.workspace.configured", side_effect=configs.__getitem__),
+              patch("factory.workspace.Provider") as provider,
+              patch("factory.cascade.codex_executable", return_value="/test/codex"),
+              patch("factory.cascade.Codex") as codex,
+              patch("factory.__main__.operate", return_value={"stage": "ready"}) as run):
+            provider.return_value.issue.return_value = issue
+            codex.return_value.plan_workspace.return_value = {"verdict": "READY", "report": "Two tasks", "tasks": [
+                {"repository": "be", "scope": "Expose status."},
+                {"repository": "fe", "scope": "Render status."},
+            ]}
+            for _ in range(2):
+                with redirect_stdout(io.StringIO()) as stdout:
+                    workspace_command(args)
+                results = json.loads(stdout.getvalue())
+                self.assertEqual([row["repository"] for row in results], ["be", "fe"])
+                self.assertTrue(all(row["parent_issue_url"] == issue["url"] for row in results))
+            codex.return_value.plan_workspace.assert_called_once()
+            self.assertEqual([call.args[:3] for call in run.call_args_list[:2]], [
+                (configs[backend], "run", 42), (configs[frontend], "run", 42)])
+            route = run.call_args_list[0].kwargs["route"]
+            self.assertIn("Expose status.", route.current_issue()["body"])
+            self.assertEqual(route.current_issue()["workspace_parent"], configs[parent]["git_url"])
+            for call in provider.return_value.update_workspace_note.call_args_list:
+                self.assertEqual(call.args[0], 42)
+                self.assertIn("`team/backend` — Checks and reviews passed", call.args[1])
+                self.assertIn("`team/frontend` — Checks and reviews passed", call.args[1])
+            for checkout, stage in ((backend, "ready"), (frontend, "needs-human")):
+                with State(configs[checkout]) as state:
+                    state.save({"id": -42, "issue": issue, "stage": stage}, "fixture")
+            args.action = "publish"
+            with self.assertRaisesRegex(Refused, "fe issue #42 is not ready"):
+                workspace_command(args)
+            self.assertEqual(run.call_count, 4)
+            with State(configs[frontend]) as state:
+                state.save({"id": -42, "issue": issue, "stage": "ready"}, "fixture")
+            run.return_value = {"stage": "published"}
+            with redirect_stdout(io.StringIO()):
+                workspace_command(args)
+            self.assertEqual([call.args[1] for call in run.call_args_list[-2:]], ["publish", "publish"])
+            codex.return_value.plan_workspace.assert_called_once()
+
+    def test_workspace_cascade_refuses_a_repository_outside_the_workspace(self):
+        parent = self.repository("parent")
+        config = {"state_dir": str(self.directory / "state")}
+        issue = {"number": 42, "body": "Frontend change"}
+        with (patch("factory.cascade.codex_executable", return_value="/test/codex"),
+              patch("factory.cascade.Codex") as codex):
+            codex.return_value.plan_workspace.return_value = {"verdict": "READY", "report": "Plan", "tasks": [
+                {"repository": "other", "scope": "Change outside workspace."}]}
+            with self.assertRaisesRegex(Refused, "Unknown repository"):
+                cascade_jobs({".": parent}, config, None, issue, "run")

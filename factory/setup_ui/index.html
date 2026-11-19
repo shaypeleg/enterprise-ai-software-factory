@@ -57,7 +57,7 @@
             <label>Issue queue label<input id="queue_label" required autocomplete="off" aria-describedby="queue-label-help"></label>
             <div class="wide">
               <p id="queue-label-help" class="hint">The default is <code>factory:ready</code> (one colon). In this repository, create the label under <strong>Manage → Labels → New label</strong> in GitLab or <strong>Issues → Labels → New label</strong> in GitHub. Apply the exact label to open issues you want to queue.</p>
-              <p id="workspace-label-help" class="hint" hidden>Set the queue label for each repository you plan to use. For a routed run, label the parent issue with the parent repository’s label and each linked issue with its own repository’s label. Create the label in each repository where it is missing.</p>
+              <p id="workspace-label-help" class="hint" hidden>For automatic workspace routing, label the parent issue only. Use a child repository’s queue label when you want to run an issue from its own queue.</p>
             </div>
           </div>
         </section>
