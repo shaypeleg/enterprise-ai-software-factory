@@ -73,7 +73,7 @@ def list_runs(settings):
             placeholders = ", ".join("?" for _ in jobs)
             snapshots = reader.execute(f"""
                 SELECT job, at, event, value FROM events WHERE job IN ({placeholders})
-                AND (event LIKE 'stage-%' OR event IN ('gate-pass', 'revision-required', 'transition'))
+                AND (event LIKE 'stage-%' OR event IN ('started-gate', 'gate-pass', 'revision-required', 'transition'))
                 ORDER BY job, sequence
             """, tuple(jobs))
             for number, entries in groupby(snapshots, key=lambda row: row[0]):

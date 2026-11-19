@@ -17,7 +17,8 @@ const stages = {intake: 'Intake', spec: 'Specification', build: 'Build', gate: '
   'needs-human': 'Needs human review', 'needs-info': 'Needs information'};
 const roles = {intake: 'Intake', spec: 'Specification', build: 'Build', gate: 'Checks', code: 'Code review',
   security: 'Security review', ux: 'UX review', ui: 'UI review', handoff: 'Handoff'};
-const abbreviations = {gate: 'Gate', code: 'Code', security: 'Security', ux: 'UX', ui: 'UI'};
+const cardRoles = {intake: 'Intake', spec: 'Spec', build: 'Build', gate: 'Gate',
+  code: 'Code', security: 'Security', ux: 'UX', ui: 'UI', handoff: 'Handoff'};
 const events = {created: 'Run created', transition: 'Stage changed', 'base-pinned': 'Base commit pinned',
   'gate-pass': 'Checks passed', 'revision-required': 'Revision requested', published: 'Draft PR/MR published',
   'commit-prepared': 'Candidate commit prepared', interrupted: 'Run interrupted',
@@ -95,12 +96,12 @@ function linksFor(job, full = false) {
 }
 
 function chip(role, verdict, short = false) {
-  const label = verdict === 'running' ? 'In progress' : verdict;
+  const label = {running: 'In progress', 'not-run': 'Not run', 'NEEDS-INFO': 'Needs info'}[verdict] || verdict;
   const kind = ['PASS', 'READY', 'ACCEPT'].includes(verdict) ? 'pass'
     : ['FAIL', 'CHANGES', 'BLOCKED', 'REJECT'].includes(verdict) ? 'fail'
-    : verdict === 'running' ? 'progress' : '';
+    : {running: 'progress', 'not-run': 'not-run', 'NEEDS-INFO': 'needs-info'}[verdict] || '';
   const name = roles[role];
-  const badge = node('span', short ? abbreviations[role] : `${name} · ${label}`, `chip ${kind}`.trim());
+  const badge = node('span', short ? cardRoles[role] : `${name} · ${label}`, `chip ${kind}`.trim());
   if (short) {
     badge.title = `${name} · ${label}`;
     badge.append(node('span', ` · ${label}`, 'visually-hidden'));
@@ -113,21 +114,20 @@ function roundTags(job) {
   for (let round = 1; round <= job.round; round++) {
     const recorded = job.rounds?.[round] || {};
     const active = round === job.round ? job.active_role : null;
-    const gate = active === 'gate' ? 'running' : recorded.gate?.verdict;
-    if (!gate) continue;
     const row = node('div', '', 'card-round');
     row.setAttribute('role', 'group');
     row.setAttribute('aria-label', `Round ${round}`);
-    row.append(node('span', `R${round}`, 'round-label'), chip('gate', gate, true));
-    if (gate === 'PASS') {
-      for (const role of job.review_roles) {
-        const verdict = active === role ? 'running' : recorded[role]?.verdict;
-        if (verdict) row.append(chip(role, verdict, true));
+    const tags = node('div', '', 'verdicts');
+    for (const role of Object.keys(cardRoles)) {
+      const verdict = active === role ? 'running' : recorded[role]?.verdict;
+      if (verdict || role === 'gate' || job.review_roles.includes(role)) {
+        tags.append(chip(role, verdict || 'not-run', true));
       }
     }
+    row.append(node('span', `R${round}`, 'round-label'), tags);
     rows.append(row);
   }
-  return rows.childElementCount ? rows : null;
+  return rows;
 }
 
 function elapsed(job) {
@@ -165,7 +165,7 @@ function renderCard(job) {
   const rounds = roundTags(job);
   item.append(button, meta);
   if (links) item.append(links);
-  if (rounds) item.append(rounds);
+  item.append(rounds);
   return item;
 }
 

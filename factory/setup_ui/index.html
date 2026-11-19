@@ -45,7 +45,10 @@
             <label class="wide">API endpoint<input type="url" id="api_url" required autocomplete="off"></label>
             <label>Base branch<input id="base_branch" required autocomplete="off"></label>
             <label>Issue queue label<input id="queue_label" required autocomplete="off" aria-describedby="queue-label-help"></label>
-            <p id="queue-label-help" class="hint wide">The default is <code>factory:ready</code>. Create this issue label in GitLab under <strong>Manage → Labels</strong> or in GitHub under <strong>Issues → Labels</strong>. Apply the exact label to open issues you want the factory to pick up. One label is enough.</p>
+            <div class="wide">
+              <p id="queue-label-help" class="hint">The default is <code>factory:ready</code> (one colon). In this repository, create the label under <strong>Manage → Labels → New label</strong> in GitLab or <strong>Issues → Labels → New label</strong> in GitHub. Apply the exact label to open issues you want to queue.</p>
+              <p id="workspace-label-help" class="hint" hidden>Set the queue label for each repository you plan to use. For a routed run, label the parent issue with the parent repository’s label and each linked issue with its own repository’s label. Create the label in each repository where it is missing.</p>
+            </div>
           </div>
         </section>
         <section class="panel" aria-labelledby="models-title" hidden>
@@ -74,6 +77,12 @@
             <label>Git credential source<select id="credential_source"><option value="workspace">Use workspace Git credentials</option><option value="environment">Use a token environment variable</option></select></label>
             <label id="token-variable" hidden>Git token variable name<input id="token_env" pattern="[A-Za-z_][A-Za-z0-9_]*" aria-describedby="credential-help" autocomplete="off"></label>
             <p class="hint" id="credential-help"></p>
+            <div id="workspace-login" hidden>
+              <p class="hint">If you need to sign in, run this command in <strong>Codex → Terminal</strong>. Complete sign-in there, then return here and select <strong>Test connection</strong>.</p>
+              <pre class="login-command"><code id="login-command"></code></pre>
+              <p id="login-prompt-help" class="hint"></p>
+            </div>
+            <p id="workspace-access-help" class="hint" hidden>In the workspace selector, test and save each child repository. Reuse the same login when it has access to that project. If a repo is inaccessible, use an account with access or configure that repo’s own token variable.</p>
             <button type="button" class="back" id="test-connection">Test connection</button>
             <p id="connection-status" class="hint" role="status">Connection unverified.</p>
             <label class="option" id="unverified-option"><input type="checkbox" id="allow-unverified"><span>Save settings without verifying the connection.</span></label>
@@ -88,7 +97,7 @@
         <p>Open this project in Codex and select <strong>Factory</strong> from <code>/skills</code>, or type <code id="skill-command">$factory</code>.</p>
         <ol>
           <li>Start the live dashboard in Codex with <code id="dashboard-command">$factory dashboard</code>. Open the private browser link it prints.</li>
-          <li>Apply the label <code id="saved-queue-label"></code> to an open issue, then run <code id="queue-command">$factory queue</code> to confirm it appears.</li>
+          <li>Apply the label <code id="saved-queue-label"></code> to an open issue in this repository, then run <code id="queue-command">$factory queue</code> to confirm it appears.</li>
           <li>Start the issue explicitly with <code id="run-command">$factory run 42</code>, using your issue number. Follow its progress in the dashboard.</li>
         </ol>
         <p id="saved-path" class="hint"></p>

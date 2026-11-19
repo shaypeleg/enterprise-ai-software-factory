@@ -83,7 +83,7 @@ function describeAccess() {
   const provider = element('provider').value;
   element('permissions').textContent = provider === 'github'
     ? 'Use a repository-scoped GitHub credential. Queue access needs issue read permission. Publishing additionally needs Contents and Pull requests write permission.'
-    : 'Use a project-scoped GitLab credential. Reading requires API access. Publishing additionally needs API write access and permission to push candidate branches.';
+    : 'Use a GitLab credential with access to this project. Reading requires API access. Publishing additionally needs API write access and permission to push candidate branches.';
 }
 
 function describeCredentialSource() {
@@ -93,7 +93,26 @@ function describeCredentialSource() {
   element('token_env').required = useVariable;
   element('credential-help').textContent = useVariable
     ? `Enter the variable name, for example ${defaultTokenName()}. Set its value in the terminal before launching setup.`
-    : 'Use a saved HTTPS credential or sign in once with glab (GitLab) or gh (GitHub) for your Git host. You can keep using SSH for ordinary Git commands. The token stays out of the browser.';
+    : 'Use an existing Git credential or a saved CLI login for this Git host.';
+
+  const provider = element('provider').value;
+  let host = '';
+  try {
+    const origin = new URL(element('git_url').value);
+    if (origin.protocol === 'https:' && /^[a-z0-9][a-z0-9.-]*$/i.test(origin.hostname)) host = origin.hostname;
+  } catch { /* The user can fill in the origin on the repository step. */ }
+  const showLogin = !useVariable && host && ['gitlab', 'github'].includes(provider);
+  element('workspace-login').hidden = !showLogin;
+  element('workspace-access-help').hidden = !settings?.repositories;
+  if (showLogin) {
+    const gitlab = provider === 'gitlab';
+    element('login-command').textContent = gitlab
+      ? `glab auth login --hostname ${host} --use-keyring`
+      : `gh auth login --hostname ${host}`;
+    element('login-prompt-help').textContent = gitlab
+      ? 'Choose Token and paste it at the terminal prompt. If asked for a Git protocol, choose the one your checkout already uses. Choose HTTPS for the API.'
+      : 'Follow the sign-in prompts. If asked for a Git protocol, choose the one your checkout already uses.';
+  }
 }
 
 function defaultTokenName() {
@@ -196,6 +215,7 @@ testButton.addEventListener('click', async () => {
 for (const key of ['git_url', 'api_url', 'repository', 'token_env']) {
   element(key).addEventListener('input', invalidateConnection);
 }
+element('git_url').addEventListener('input', describeCredentialSource);
 element('token_env').addEventListener('input', validateTokenName);
 allowUnverified.addEventListener('change', updateActions);
 element('use-suggested-checks').addEventListener('click', () => {
@@ -279,6 +299,7 @@ async function loadRepository() {
     if (!session) throw new Error('Open the private setup URL printed in your terminal.');
     settings = await request();
     const config = settings.config;
+    element('workspace-label-help').hidden = !settings.repositories;
     if (settings.repositories) {
       element('repository-choice').hidden = false;
       selector.replaceChildren();

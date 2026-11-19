@@ -59,6 +59,29 @@ class DashboardTests(unittest.TestCase):
         self.assertIsNone(list_runs(self.settings)[0]["active_role"])
         self.assertIsNone(run_detail(self.settings, 12)["job"]["active_role"])
 
+    def test_review_results_belong_to_the_round_that_produced_them(self):
+        self.job.update(stage="review", results={"intake": {"verdict": "ACCEPT", "surfaces": ["ui"]}})
+        with State(self.config) as state:
+            state.save(self.job, "stage-intake")
+            for role, verdict in {"gate": "PASS", "code": "CHANGES", "ux": "PASS", "ui": "PASS"}.items():
+                self.job["results"][role] = {"verdict": verdict}
+                state.save(self.job, "gate-pass" if role == "gate" else f"stage-{role}")
+            self.job.update(stage="build", round=2)
+            state.save(self.job, "revision-required")
+            self.job["stage"] = "gate"
+            state.save(self.job, "started-gate")
+            active = list_runs(self.settings)[0]
+            self.assertEqual(active["active_role"], "gate")
+            self.assertNotIn(2, active["rounds"])
+            self.job.update(stage="needs-human")
+            state.save(self.job, "revision-required")
+
+        rounds = list_runs(self.settings)[0]["rounds"]
+        self.assertEqual(rounds[1]["code"], {"verdict": "CHANGES"})
+        self.assertEqual(rounds[1]["ux"], {"verdict": "PASS"})
+        self.assertEqual(rounds[1]["ui"], {"verdict": "PASS"})
+        self.assertEqual(rounds[2], {"gate": {"verdict": "FAIL"}})
+
     def test_dashboard_api_requires_a_local_private_session(self):
         with patch("factory.dashboard.HTTPServer") as server_factory:
             server_factory.return_value.server_port = 42000

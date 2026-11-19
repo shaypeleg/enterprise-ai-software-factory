@@ -59,6 +59,7 @@ details { margin: 20px 0; padding-block: 10px; border-block: 1px solid var(--lin
 summary { cursor: pointer; font-weight: 650; }
 details .fields { padding: 14px 2px 3px; }
 .access h3 { margin: 15px 0 6px; }
+.login-command { margin: 8px 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--bright); color: var(--ink); font-size: .83rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 .option { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; font-weight: 520; }
 .option input { width: 17px; height: 17px; flex: 0 0 auto; margin: 3px 0 0; accent-color: var(--accent); }
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
