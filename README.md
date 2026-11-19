@@ -88,6 +88,8 @@ Use a current Codex CLI with permission profiles. The wizard lists models
 reported by the local CLI and defaults to **Automatic** so Codex can select a
 model. Use **Refresh models** after signing in or changing accounts. Each role
 can inherit the default, select a listed model, or enter its own model ID.
+On macOS, signed-in jobs use the CLI bundled with Codex Desktop when installed.
+Model discovery uses the same executable as the worker.
 For headless jobs, setting `CODEX_API_KEY` explicitly uses
 API-key authentication. GitHub and GitLab authentication is configured separately.
 [Codex authentication](https://learn.chatgpt.com/docs/auth)
@@ -258,10 +260,16 @@ Install from the workspace root with `--workspace`:
 npx --package=git+https://github.com/shaypeleg/enterprise-ai-software-factory.git -- factory-install --workspace
 ```
 
-The setup wizard lists the parent checkout and its Git submodules. Choose each
-repository you plan to use and save its model, check, queue and credential
-settings. Finish workspace setup when you are done. Initialize any missing
-submodules through your normal Git workflow before selecting them.
+The setup wizard starts at the first available checkout that needs configuration.
+Save the parent's model settings once. New child configurations use those models
+and skip model selection. Choose **Choose models for this repository** to set
+an override. Existing child model settings stay selected until you switch them.
+Parent changes apply to new inherited runs. Resuming a job uses its recorded
+model settings.
+
+Test and save checks, queue labels, and credentials for each checkout. Use
+**Set up next repository** to continue through the workspace. Initialize any
+missing submodules through your normal Git workflow before selecting them.
 
 For a folder of independent clones, create `.factory-workspace.json` in the
 folder before installing. For example:

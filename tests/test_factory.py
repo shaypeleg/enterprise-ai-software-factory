@@ -95,6 +95,19 @@ class EngineTests(unittest.TestCase):
         events = self.state.db.execute("SELECT event FROM events").fetchall()
         self.assertIn(("gate-pass",), events)
 
+    def test_inherited_models_are_resolved_once_per_job(self):
+        self.config["model_source"] = "workspace"
+        with (patch("factory.engine.workspace_parent", return_value=self.root),
+              patch("factory.engine.workspace_models", side_effect=[{"default": "first"}, {"default": "changed"}]) as resolve,
+              patch.object(self.engine, "prepare"),
+              patch.object(self.engine, "stage", side_effect=Refused("interrupted"))):
+            for number, expected in [(8, "first"), (8, "first"), (9, "changed")]:
+                self.provider.current["number"] = number
+                with self.assertRaisesRegex(Refused, "interrupted"):
+                    self.engine.run(number)
+                self.assertEqual(self.state.get(number)["models"], {"default": expected})
+        self.assertEqual(resolve.call_count, 2)
+
     def test_authenticated_git_uses_workspace_credential(self):
         self.config["scm"]["credential_source"] = "workspace"
         git(self.repo, "config", "credential.helper", "")
@@ -520,14 +533,15 @@ class RuntimeTests(unittest.TestCase):
                 with patch("factory.runtime.subprocess.run", return_value=login) as status:
                     with patch("factory.runtime.execute", side_effect=fake_execute) as execute_role:
                         self.assertEqual(runtime.run("build", root, {}, root / "logs")["verdict"], "READY")
-                        self.assertEqual(runtime.run("security", root, {}, root / "logs")["verdict"], "PASS")
+                        self.assertEqual(runtime.run("security", root, {}, root / "logs",
+                                                     models={"default": "parent-review-model"})["verdict"], "PASS")
             status.assert_called_once()
             self.assertEqual(execute_role.call_count, 2)
             build_args, review_args = [call.args[0] for call in execute_role.call_args_list]
             self.assertIn('permissions.factory-role.extends=":workspace"', build_args)
             self.assertIn('permissions.factory-role.extends=":read-only"', review_args)
             self.assertNotIn("--model", build_args)
-            self.assertEqual(review_args[review_args.index("--model") + 1], "review-model")
+            self.assertEqual(review_args[review_args.index("--model") + 1], "parent-review-model")
 
     def test_missing_codex_login_refuses_before_launching_a_role(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {}, clear=True):

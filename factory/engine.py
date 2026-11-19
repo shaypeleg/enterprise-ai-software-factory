@@ -17,6 +17,7 @@ from .config import Refused, require
 from .credentials import repository_credential
 from .project import discovered_remote
 from .runtime import clean_env, execute
+from .workspace import workspace_models, workspace_parent
 
 
 PROTECTED = (".git*", ".github/**", ".gitlab/**", ".codex/**", ".agents/**",
@@ -251,7 +252,8 @@ class Engine:
         directory = self.state.root / "artifacts" / str(job["issue"]["number"]) / str(job["round"])
         try:
             self.state.save(job, "started-" + role)
-            result = self.runtime.run(role, self.path(job), context, directory)
+            model_settings = {"models": job["models"]} if "models" in job else {}
+            result = self.runtime.run(role, self.path(job), context, directory, **model_settings)
         finally:
             if role != "build":
                 try:
@@ -296,6 +298,8 @@ class Engine:
         if not job:
             job = {"issue": current, "branch": "factory/issue-" + str(number), "stage": "intake",
                    "round": 1, "results": {}}
+            if self.config.get("model_source") == "workspace":
+                job["models"] = workspace_models(workspace_parent(self.checkout))
             self.state.save(job, "created")
         if job["stage"] in STOP:
             return job

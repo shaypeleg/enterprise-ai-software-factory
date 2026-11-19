@@ -23,7 +23,7 @@ Inspect the ready candidate and use `$factory publish 42` to push the candidate 
 
 ## Work across repositories
 
-- `$factory workspace list` shows repository aliases. Use `$factory workspace setup` to configure each checkout from a repository selector.
+- `$factory workspace list` shows repository aliases. Use `$factory workspace setup` to configure each checkout. Set models on the parent once. Children use them by default, with a repository-level override available.
 - `$factory workspace run 42` starts with a parent issue and follows its `factory-routes` block if present. Each routed issue needs its own repository’s queue label.
 - `$factory workspace run backend=17 frontend=23` selects issues directly. Replace the aliases with those printed by `workspace list`. Use `$factory workspace publish backend=17` to publish a ready candidate for a specific repository.
 - `$factory workspace dashboard` shows live jobs across the workspace. Use `$factory workspace status` for a terminal snapshot.

@@ -2,8 +2,10 @@
 
 import json
 import os
+import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -40,6 +42,16 @@ INSTRUCTIONS = {
     "handoff": "Check the spec, build, gate and all reviews. Summarize evidence, limitations, "
                "and a staging test plan for a human. READY is a recommendation, never approval.",
 }
+
+
+def codex_executable():
+    """Keep model discovery and signed-in model runs on the same CLI."""
+    if sys.platform == "darwin" and not os.environ.get("CODEX_API_KEY"):
+        for app in ("Codex.app", "ChatGPT.app"):
+            bundled = Path("/Applications") / app / "Contents/Resources/codex-cli/bin/codex"
+            if bundled.is_file() and os.access(bundled, os.X_OK):
+                return str(bundled)
+    return shutil.which("codex")
 
 
 def clean_env(home):
@@ -97,9 +109,10 @@ class Codex:
                 "-c", f'default_permissions="{profile}"', "-c", f'{prefix}.extends="{baseline}"',
                 "-c", f"{prefix}.network.enabled=false", "-c", f"{prefix}.filesystem={{{rules}}}"]
 
-    def run(self, role, worktree, context, artifact_dir):
+    def run(self, role, worktree, context, artifact_dir, *, models=None):
         require(role in ROLES, "unknown role")
-        model = self.config["models"].get(role, self.config["models"]["default"])
+        models = self.config["models"] if models is None else models
+        model = models.get(role, models["default"])
         model_args = [] if model == "auto" else ["--model", model]
         schema = {"type": "object", "additionalProperties": False, "properties": {
             "verdict": {"type": "string", "enum": list(ROLES[role])},

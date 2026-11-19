@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -9,10 +8,10 @@ from .config import Refused, load, require
 from .dashboard import serve_dashboard
 from .engine import Engine, State
 from .project import configuration_path, project_root
-from .runtime import Codex
+from .runtime import Codex, codex_executable
 from .setup import install_skill, serve
 from .scm import Provider
-from .workspace import configured, discover, select_jobs, setup_target, workspace_root
+from .workspace import configured, discover, select_jobs, setup_start, setup_target, workspace_root
 
 
 def operate(config, command, issue=None, publish=False):
@@ -20,7 +19,7 @@ def operate(config, command, issue=None, publish=False):
     if command == "queue":
         return provider.queue()
     with State(config) as state:
-        executable = shutil.which("codex")
+        executable = codex_executable() if command == "run" else None
         if command == "run":
             require(executable, "install the OpenAI Codex CLI before running agents")
             print("Local pilot: worktrees and environment filtering are not enterprise isolation.",
@@ -43,8 +42,7 @@ def workspace_command(args):
     repositories = discover(root)
     action = args.action
     if action == "setup":
-        require(any(repositories.values()), "Initialize at least one repository first.")
-        selected = args.repository or next(alias for alias, path in repositories.items() if path is not None)
+        selected = args.repository or setup_start(repositories)
         serve(setup_target(repositories, selected), open_browser=not args.no_browser,
               repositories=repositories)
         return
@@ -145,8 +143,7 @@ def main():
             if getattr(args, "workspace", False):
                 root = workspace_root(args.project)
                 repositories = discover(root)
-                require(any(repositories.values()), "Initialize at least one repository first.")
-                selected = next(path for path in repositories.values() if path is not None)
+                selected = setup_target(repositories, setup_start(repositories))
             else:
                 root = selected = project_root(args.project)
             if args.command == "install":

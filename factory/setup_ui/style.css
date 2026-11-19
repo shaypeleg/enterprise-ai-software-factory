@@ -51,6 +51,8 @@ input::placeholder, textarea::placeholder { color: #58665d; opacity: 1; }
 textarea { font-family: ui-monospace, monospace; resize: vertical; }
 :focus-visible { outline: 3px solid #2d6c49; outline-offset: 3px; }
 .default-model { display: grid; gap: 5px; max-width: 360px; margin: 14px 0 22px; }
+.model-policy { margin-block: 16px; padding-block: 12px; border-block: 1px solid var(--line); }
+.model-policy label { max-width: 360px; }
 .model-catalog-actions { display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center; margin-top: 12px; }
 .model-catalog-actions .hint { margin: 0; }
 .model-picker { display: grid; gap: 5px; min-width: 0; }
@@ -74,6 +76,7 @@ button:disabled { cursor: wait; opacity: .65; }
 .notice { color: var(--danger); padding: 10px 0; }
 .notice.info { color: var(--accent); }
 .saved { border-bottom: 1px solid var(--line); padding-bottom: 15px; }
+#workspace-actions { flex-wrap: wrap; }
 @media (max-width: 770px) {
   .layout { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-top: 29px; }
   .workspace { grid-row: 1; }

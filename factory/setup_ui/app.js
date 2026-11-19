@@ -22,6 +22,7 @@ const scmFields = ['provider', 'api_url', 'repository', 'credential_source', 'to
 const limits = ['max_rounds', 'check_timeout_seconds', 'agent_timeout_seconds'];
 const testButton = element('test-connection');
 const allowUnverified = element('allow-unverified');
+const modelSource = element('model-source');
 let step = 0;
 let settings;
 let verified = false;
@@ -62,6 +63,22 @@ function showStep(index, focus = true) {
   }
   if (index === 1) loadModelCatalog();
   if (focus) panels[index].querySelector('h2').focus();
+}
+
+function usesParentModels() {
+  return modelSource.value === 'workspace';
+}
+
+function describeModelSource() {
+  const parent = settings.parentModels;
+  const overrides = parent ? Object.keys(parent).length - 1 : 0;
+  const defaultModel = parent?.default === 'auto' ? 'Automatic' : parent?.default;
+  element('model-source-help').textContent = !parent
+    ? 'Save the parent’s model settings to enable inheritance.'
+    : usesParentModels()
+      ? `Uses ${defaultModel} with ${overrides} role ${overrides === 1 ? 'override' : 'overrides'} from ${settings.parentName}. Parent changes apply to new runs.`
+      : 'These model choices apply only to this repository.';
+  steps[1].hidden = usesParentModels();
 }
 
 function updateActions() {
@@ -247,10 +264,15 @@ function collect() {
   const config = {version: 1};
   for (const key of fields) config[key] = value(key);
   config.scm = connection().scm;
-  config.models = {default: modelValue('default-model')};
-  for (const role of settings.roles) {
-    const model = modelValue(`model-${role}`);
-    if (model) config.models[role] = model;
+  if (usesParentModels()) {
+    config.model_source = 'workspace';
+    config.models = {default: 'auto'};
+  } else {
+    config.models = {default: modelValue('default-model')};
+    for (const role of settings.roles) {
+      const model = modelValue(`model-${role}`);
+      if (model) config.models[role] = model;
+    }
   }
   config.checks = JSON.parse(value('checks'));
   config.protected_paths = value('protected_paths').split('\n').map((line) => line.trim()).filter(Boolean);
@@ -309,6 +331,14 @@ form.addEventListener('submit', async (event) => {
       return;
     }
   }
+  if (step === 0 && usesParentModels()) {
+    if (!settings.parentModels) {
+      notice('Set up the parent before using its models, or choose models for this repository.');
+      modelSource.focus();
+      return;
+    }
+    return showStep(2);
+  }
   if (step < 2) return showStep(step + 1);
   let payload;
   try { payload = collect(); } catch {
@@ -327,7 +357,7 @@ form.addEventListener('submit', async (event) => {
       ? `Private config saved at ${saved.path}. The project preset was also saved.`
       : `Private config saved at ${saved.path}.`;
     if (!saved.verified) element('saved-path').textContent += ' Connection unverified.';
-    element('finish').hidden = !settings.repositories;
+    element('workspace-actions').hidden = !settings.repositories;
     element('skill-command').textContent = settings.repositories ? '$factory workspace list' : '$factory';
     const command = settings.repositories ? '$factory workspace' : '$factory';
     element('dashboard-command').textContent = `${command} dashboard`;
@@ -336,7 +366,10 @@ form.addEventListener('submit', async (event) => {
     element('run-command').textContent = `${command} run ${issue}`;
     element('saved-queue-label').textContent = payload.config.scm.queue_label;
     if (settings.repositories) {
+      settings.repositories.find((repo) => repo.alias === settings.selected).configured = true;
       element('workspace-repository').selectedOptions[0].textContent = repositoryLabel(settings.selected, 'configured');
+      element('next-repository').hidden = !pendingRepository();
+      describeWorkspaceProgress();
     }
     element('saved').querySelector('h2').focus();
   } catch (error) {
@@ -346,7 +379,8 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-element('back').addEventListener('click', () => { notice(''); showStep(step - 1); });
+element('back').addEventListener('click', () => { notice(''); showStep(usesParentModels() ? 0 : step - 1); });
+modelSource.addEventListener('change', describeModelSource);
 element('refresh-models').addEventListener('click', () => loadModelCatalog(true));
 element('provider').addEventListener('change', providerChanged);
 element('credential_source').addEventListener('change', () => {
@@ -360,7 +394,20 @@ function repositoryLabel(alias, state) {
   return `${alias === '.' ? 'Parent repository' : alias} · ${state}`;
 }
 
-async function loadRepository() {
+function pendingRepository() {
+  return settings.repositories.find((repo) => repo.available && !repo.configured);
+}
+
+function describeWorkspaceProgress() {
+  const progress = element('workspace-progress');
+  progress.hidden = !settings.repositories;
+  if (settings.repositories) {
+    const count = settings.repositories.filter((repo) => repo.configured).length;
+    progress.textContent = `${count} of ${settings.repositories.length} repositories configured`;
+  }
+}
+
+async function loadRepository(focus = false) {
   const selector = element('workspace-repository');
   selector.disabled = true;
   form.hidden = true;
@@ -386,6 +433,11 @@ async function loadRepository() {
       }
       selector.value = settings.selected;
     }
+    describeWorkspaceProgress();
+    element('model-policy').hidden = !settings.parentName && settings.modelSource !== 'workspace';
+    modelSource.options[0].disabled = !settings.parentModels;
+    modelSource.value = settings.modelSource ?? 'repository';
+    describeModelSource();
     element('project').textContent = settings.project;
     element('project').hidden = false;
     element('origin-hint').textContent = settings.originHint;
@@ -405,8 +457,8 @@ async function loadRepository() {
     describeCredentialSource();
     validateTokenName();
     notice(settings.presetMessage, true);
-    showStep(0, false);
     form.hidden = false;
+    showStep(0, focus);
   } catch (error) {
     notice(error.message);
   } finally {
@@ -415,11 +467,17 @@ async function loadRepository() {
   }
 }
 
-element('workspace-repository').addEventListener('change', loadRepository);
+element('workspace-repository').addEventListener('change', () => loadRepository());
+element('next-repository').addEventListener('click', () => {
+  const nextRepo = pendingRepository();
+  if (!nextRepo) return;
+  element('workspace-repository').value = nextRepo.alias;
+  loadRepository(true);
+});
 element('finish').addEventListener('click', async () => {
   try {
     await request({method: 'POST'}, '/api/finish');
-    element('finish').hidden = true;
+    element('workspace-actions').hidden = true;
     element('repository-choice').hidden = true;
   } catch (error) {
     notice(error.message);

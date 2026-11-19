@@ -14,6 +14,7 @@ from factory.model_catalog import available_models
 from factory.project import configuration_path, detect, discovered_remote
 from factory.scm import Provider, SCMHTTPError
 from factory.setup import PRESET, connection_key, initial, install_skill, save, server_for, verify_connection
+from factory.workspace import setup_start, workspace_models, workspace_parent
 
 
 class ProjectSetupTests(unittest.TestCase):
@@ -217,7 +218,7 @@ class ProjectSetupTests(unittest.TestCase):
             ]}}) + "'\n"
         )
         cli.chmod(0o700)
-        with (patch("factory.model_catalog.shutil.which", return_value=str(cli)),
+        with (patch("factory.model_catalog.codex_executable", return_value=str(cli)),
               patch.dict(os.environ, {"FACTORY_GITLAB_TOKEN": "fixture-value"})):
             self.assertEqual(available_models(), [
                 {"id": "example-sol", "label": "Example Sol"},
@@ -244,6 +245,47 @@ class ProjectSetupTests(unittest.TestCase):
             handler.do_GET()
             reply.assert_called_with(200, {"models": models})
             self.assertEqual(catalog.call_count, 2)
+
+    def test_new_child_defaults_to_parent_models_and_keeps_its_own_repository_settings(self):
+        child = self.root / "frontend"
+        child.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(child)], check=True)
+        subprocess.run(["git", "-C", str(child), "remote", "add", "origin",
+                        "git@gitlab.example.com:team/frontend.git"], check=True)
+        repositories = {".": self.root, "frontend": child}
+        self.assertIsNone(workspace_parent(self.root, repositories))
+        self.assertEqual(workspace_parent(child, repositories), self.root)
+        self.assertEqual(setup_start(repositories), ".")
+        parent = self.payload()
+        save(self.root, parent)
+        self.assertEqual(setup_start(repositories), "frontend")
+
+        setup = initial(child, self.root)
+        self.assertEqual(setup["modelSource"], "workspace")
+        self.assertEqual(setup["parentModels"], parent["config"]["models"])
+        child_settings = setup["config"]
+        child_settings["model_source"] = "workspace"
+        save(child, {"config": child_settings, "consent": True}, self.root)
+        saved = load(configuration_path(child))
+        self.assertEqual(saved["models"], {"default": "auto"})
+        self.assertEqual(saved["scm"]["repository"], "team/frontend")
+        self.assertEqual(initial(child, self.root)["modelSource"], "workspace")
+
+        parent["config"]["models"] = {"default": "updated-model"}
+        save(self.root, parent)
+        self.assertEqual(workspace_models(self.root), {"default": "updated-model"})
+        self.assertEqual(load(configuration_path(child)), saved)
+        child_settings.pop("model_source")
+        child_settings["models"] = {"default": "local-model"}
+        save(child, {"config": child_settings, "consent": True}, self.root)
+        self.assertEqual(initial(child, self.root)["modelSource"], "repository")
+        self.assertEqual(initial(child, self.root)["config"]["models"], {"default": "local-model"})
+
+    def test_inheritance_requires_a_saved_parent(self):
+        payload = self.payload()
+        payload["config"]["model_source"] = "workspace"
+        with self.assertRaisesRegex(Refused, "Save the parent"):
+            save(self.root, payload)
 
     def test_cannot_save_a_different_target_or_use_model_token_for_scm(self):
         payload = self.payload()

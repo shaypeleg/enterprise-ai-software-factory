@@ -4,17 +4,16 @@ import json
 import os
 import re
 import select
-import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 
-from .runtime import clean_env
+from .runtime import clean_env, codex_executable
 
 
 def available_models():
-    executable = shutil.which("codex")
+    executable = codex_executable()
     if not executable:
         return []
     with tempfile.TemporaryDirectory(prefix="factory-models-") as temp:

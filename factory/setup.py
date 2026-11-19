@@ -19,7 +19,7 @@ from .model_catalog import available_models
 from .project import configuration_path, detect, state_path
 from .runtime import ROLES
 from .scm import Provider, SCMHTTPError
-from .workspace import setup_target
+from .workspace import setup_target, workspace_models, workspace_parent
 
 
 SOURCE = Path(__file__).resolve().parent.parent
@@ -108,7 +108,7 @@ def preset_path(root):
     return path
 
 
-def initial(root):
+def initial(root, parent=None):
     info = detect(root)
     defaults = json.loads((SOURCE / "config.example.json").read_text())
     defaults.update({key: info[key] for key in ("checkout", "git_url", "base_branch", "scm")})
@@ -118,6 +118,7 @@ def initial(root):
     defaults["checks"] = checks
     path = configuration_path(root)
     message = ""
+    from_preset = False
     if path.is_file():
         defaults = load(path)
         checks_hint = "Using the checks already saved for this checkout."
@@ -129,18 +130,32 @@ def initial(root):
                 stored = json.loads(preset.read_text())
                 require(isinstance(stored, dict) and stored.get("version") == 1, "Unsupported project preset.")
                 candidate = dict(defaults, **{key: stored[key] for key in PORTABLE if key in stored})
+                if "model_source" in stored:
+                    candidate["model_source"] = stored["model_source"]
                 candidate["state_dir"] = str(state_path(root, "preview"))
                 validate(candidate, path)
                 defaults = candidate
+                from_preset = True
                 if "checks" in stored:
                     checks_hint = "Using the checks from the project preset. Review them before saving."
                 message = "Loaded the project preset. Review its endpoints and every check command before saving."
         except (Refused, OSError, ValueError, TypeError, AttributeError, KeyError):
             message = "The project preset could not be loaded. Review or replace it from this wizard."
     defaults["scm"] = selected_scm(defaults["scm"])
+    parent_models = None
+    if parent is not None:
+        try:
+            parent_models = workspace_models(parent)
+        except (Refused, OSError, ValueError, KeyError):
+            pass
+    model_source = defaults.get("model_source", "repository")
+    if parent_models and not path.is_file() and not from_preset:
+        model_source = "workspace"
     return {"config": {key: defaults[key] for key in PORTABLE}, "project": str(root),
             "origin": info["git_url"], "originHint": info["origin_hint"],
             "presetMessage": message, "hasConfig": path.is_file(), "roles": list(ROLES),
+            "modelSource": model_source, "parentName": parent.name if parent else None,
+            "parentModels": parent_models,
             "checksHint": checks_hint, "suggestedChecks": checks, "suggestedChecksHint": suggested_checks_hint}
 
 
@@ -194,10 +209,16 @@ def verify_connection(root, config):
     return connection_key(config)
 
 
-def save(root, data):
+def save(root, data, parent=None):
     require(isinstance(data, dict) and data.get("consent") is True, "Confirm project access before saving.")
     config = {key: data["config"][key] for key in PORTABLE}
     config["scm"] = selected_scm(config["scm"])
+    source = data["config"].get("model_source", "repository")
+    require(source in ("repository", "workspace"), "invalid model source")
+    if source == "workspace":
+        require(root != parent, "The parent repository needs its own model settings.")
+        workspace_models(parent)
+        config.update(model_source=source, models={"default": "auto"})
     require(set(config["models"]).issubset({"default", *ROLES}), "Unknown model role.")
     config.update(execution_mode="local-pilot", checkout=str(root),
                   state_dir=str(state_path(root, secrets.token_hex(8))),
@@ -220,6 +241,8 @@ def save(root, data):
         # Only portable values. Keep reviewable instructions separate from the executable config.
         preset = {key: config[key] for key in PORTABLE}
         preset["scm"] = selected_scm(config["scm"])
+        if "model_source" in config:
+            preset["model_source"] = config["model_source"]
         save_json(preset_path(root), preset)
     save_json(path, config)
     return {"path": str(path), "shared": data.get("share") is True}
@@ -244,7 +267,8 @@ def server_for(root, repositories=None):
                 return self.reply(200, {"models": available_models()})
             if url.path == "/api/setup" and self.authorized():
                 try:
-                    result = initial(self.selected_repository(url.query))
+                    path = self.selected_repository(url.query)
+                    result = initial(path, workspace_parent(path, repositories))
                     if repositories is not None:
                         result["repositories"] = [
                             {"alias": alias, "available": path is not None,
@@ -283,7 +307,7 @@ def server_for(root, repositories=None):
                 verified = self.server.verified.get(path) == connection_key(payload["config"])
                 require(verified or payload.get("allowUnverified") is True,
                         "Test this connection or explicitly choose to save it unverified.")
-                result = save(path, payload)
+                result = save(path, payload, workspace_parent(path, repositories))
                 result["verified"] = verified
             except Refused as error:
                 return self.reply(400, {"error": str(error)})

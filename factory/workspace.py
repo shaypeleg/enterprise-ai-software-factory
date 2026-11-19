@@ -90,6 +90,31 @@ def setup_target(repositories, alias):
     return path
 
 
+def setup_start(repositories):
+    available = [alias for alias, path in repositories.items() if path is not None]
+    require(available, "Initialize at least one repository first.")
+    return next((alias for alias in available if not configuration_path(repositories[alias]).is_file()), available[0])
+
+
+def workspace_parent(checkout, repositories=None):
+    checkout = Path(checkout)
+    if repositories is None:
+        root = workspace_root(checkout)
+        if root == checkout:
+            return None
+        repositories = discover(root)
+    parent = repositories.get(".")
+    return parent if parent != checkout and checkout in repositories.values() else None
+
+
+def workspace_models(parent):
+    require(parent is not None and configuration_path(parent).is_file(),
+            "Save the parent repository’s model settings in workspace setup first.")
+    config = configured(parent)
+    require(config.get("model_source") != "workspace", "The parent repository needs its own model settings.")
+    return config["models"]
+
+
 def configured(path):
     settings = configuration_path(path)
     require(settings.is_file(), f"Set up {path} in the browser before running jobs.")

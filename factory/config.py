@@ -79,6 +79,7 @@ def validate(config, path):
         isinstance(p, str) and p for p in config["protected_paths"]
     ), "protected_paths must be a list of patterns")
     models = config["models"]
+    require(config.get("model_source", "repository") in ("repository", "workspace"), "invalid model source")
     require(isinstance(models, dict) and "default" in models, "models.default is required")
     for model in models.values():
         require(isinstance(model, str) and re.fullmatch(r"[A-Za-z0-9_.-]+", model)
