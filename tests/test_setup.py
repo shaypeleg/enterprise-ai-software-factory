@@ -96,6 +96,36 @@ class ProjectSetupTests(unittest.TestCase):
                 scm.queue()
             helper.assert_not_called()
 
+    def test_queue_uses_saved_provider_login_when_workspace_helper_is_empty(self):
+        for cli, remote, header, value in (
+            ("glab", "gitlab.example.com", "Private-token", "test-token"),
+            ("gh", "github.com", "Authorization", "Bearer test-token"),
+        ):
+            with self.subTest(cli=cli):
+                self.git("remote", "set-url", "origin", f"git@{remote}:team/app.git")
+                config = initial(self.root)["config"]
+                with (patch("factory.credentials.credential_fields",
+                            side_effect=[{}, {"username": "test-user", "password": "test-token"}]) as creds,
+                      patch("factory.credentials.shutil.which",
+                            side_effect=[None, f"/opt/homebrew/bin/{cli}"]) as which,
+                      patch("factory.scm.build_opener") as opener):
+                    opener.return_value.open.return_value = io.BytesIO(b"[]")
+                    self.assertEqual(Provider(config["scm"], checkout=self.root,
+                                              git_url=config["git_url"]).queue(), [])
+                    request = opener.return_value.open.call_args.args[0]
+                    self.assertEqual(request.get_header(header), value)
+                    self.assertEqual(creds.call_args.args, (
+                        [f"/opt/homebrew/bin/{cli}", "auth", "git-credential", "get"],
+                        self.root, f"protocol=https\nhost={remote}\npath=team/app.git\n\n"))
+                    which.assert_called_with(cli, path="/opt/homebrew/bin:/usr/local/bin")
+
+    def test_missing_saved_login_names_the_host(self):
+        config = initial(self.root)["config"]
+        with (patch("factory.credentials.credential_fields", return_value={}),
+              patch("factory.credentials.shutil.which", return_value="/opt/homebrew/bin/glab")):
+            with self.assertRaisesRegex(Refused, r"glab auth login --hostname gitlab\.example\.com"):
+                verify_connection(self.root, config)
+
     def test_workspace_settings_discard_an_unused_token_field(self):
         payload = self.payload()
         scm = payload["config"]["scm"]

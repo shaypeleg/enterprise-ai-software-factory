@@ -148,12 +148,14 @@ for each configured command, including dependency installation. These limits are
 per invocation or command, so a full job with several stages and rounds can take
 longer. Increase either limit in **Advanced check settings**, up to 3,600 seconds.
 
-New setups default to **Use workspace Git credentials**. The factory asks the
-checkout’s Git credential helper for an HTTPS credential when you test the
-connection or run a job. If your terminal uses an SSH key or the helper cannot
-provide an API token, choose **Use a token environment variable** and set it in
-the process environment before launching setup. Enter the variable name in the
-wizard, for example `FACTORY_GITLAB_TOKEN`. Existing selections are preserved.
+New setups default to **Use workspace Git credentials**. The factory first asks
+the checkout’s Git credential helper for an HTTPS credential, then tries the
+saved `glab` or `gh` login for the same host. SSH can remain your Git protocol.
+Sign in once with `glab auth login --hostname YOUR_GITLAB_HOST --use-keyring`
+or `gh auth login --hostname YOUR_GITHUB_HOST`, then use the skill from Codex
+desktop without keeping a terminal open. For CI or a service account, choose
+**Use a token environment variable** and set its value in the launch environment.
+Existing selections are preserved until you change them in setup.
 The token is kept out of the browser and saved settings. The test contacts the
 Git origin’s HTTPS host and port, or the official GitHub API for `github.com`,
 and checks issue read access. Push and PR/MR permissions are checked when used.

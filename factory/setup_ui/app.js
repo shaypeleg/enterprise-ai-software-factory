@@ -93,7 +93,7 @@ function describeCredentialSource() {
   element('token_env').required = useVariable;
   element('credential-help').textContent = useVariable
     ? `Enter the variable name, for example ${defaultTokenName()}. Set its value in the terminal before launching setup.`
-    : 'Use the HTTPS token already stored by your Git credential helper. If Git uses an SSH key only, choose a token environment variable. The token stays out of the browser.';
+    : 'Use a saved HTTPS credential or sign in once with glab (GitLab) or gh (GitHub) for your Git host. You can keep using SSH for ordinary Git commands. The token stays out of the browser.';
 }
 
 function defaultTokenName() {
