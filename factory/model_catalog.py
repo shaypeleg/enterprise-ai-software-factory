@@ -12,7 +12,7 @@ from pathlib import Path
 from .runtime import clean_env, codex_executable
 
 
-def available_models():
+def available_models(*, include_effort=False):
     executable = codex_executable()
     if not executable:
         return []
@@ -40,7 +40,7 @@ def available_models():
                 try:
                     server.stdin.write(b"".join(json.dumps(message).encode() + b"\n" for message in messages))
                     server.stdin.flush()
-                    return read_models(server.stdout)
+                    return read_models(server.stdout, include_effort=include_effort)
                 finally:
                     if server.poll() is None:
                         server.kill()
@@ -48,7 +48,7 @@ def available_models():
             return []
 
 
-def read_models(stream):
+def read_models(stream, *, include_effort=False):
     deadline = time.monotonic() + 8
     pending = b""
     received = 0
@@ -75,5 +75,10 @@ def read_models(stream):
                     if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", name):
                         display = entry.get("displayName")
                         catalog[name] = {"id": name, "label": display[:128] if isinstance(display, str) and display else name}
+                        if include_effort:
+                            efforts = entry.get("supportedReasoningEfforts")
+                            catalog[name]["efforts"] = [
+                                option.get("reasoningEffort") for option in efforts if isinstance(option, dict)
+                            ] if isinstance(efforts, list) else []
                 return list(catalog.values())
     return []

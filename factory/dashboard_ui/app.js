@@ -21,8 +21,10 @@ const cardRoles = {intake: 'Intake', spec: 'Spec', build: 'Build', gate: 'Gate',
   code: 'Code', security: 'Security', ux: 'UX', ui: 'UI', handoff: 'Handoff'};
 const events = {created: 'Run created', transition: 'Stage changed', 'base-pinned': 'Base commit pinned',
   'gate-pass': 'Checks passed', 'revision-required': 'Revision requested', published: 'Draft PR/MR published',
+  resumed: 'Run resumed', 'expanded-review': 'Full pipeline requested',
   'commit-prepared': 'Candidate commit prepared', interrupted: 'Run interrupted',
-  'unexpected-candidate-mutation': 'Candidate changed unexpectedly'};
+  'unexpected-candidate-mutation': 'Candidate changed unexpectedly',
+  'check-candidate-mutation': 'A check changed candidate files'};
 const dateTime = new Intl.DateTimeFormat(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit'});
 const displayName = (name) => name === '.' ? 'Parent' : name;
 const runKey = ({name, id, number}) => JSON.stringify([name, id ?? number]);
@@ -96,8 +98,8 @@ function linksFor(job, full = false) {
 }
 
 function chip(role, verdict, short = false) {
-  const label = {running: 'In progress', 'not-run': 'Not run', 'NEEDS-INFO': 'Needs info'}[verdict] || verdict;
-  const kind = ['PASS', 'READY', 'ACCEPT'].includes(verdict) ? 'pass'
+  const label = {running: 'In progress', 'not-run': 'Not run', 'NEEDS-INFO': 'Needs info', QUICK: 'Quick path'}[verdict] || verdict;
+  const kind = ['PASS', 'READY', 'ACCEPT', 'QUICK'].includes(verdict) ? 'pass'
     : ['FAIL', 'CHANGES', 'BLOCKED', 'REJECT'].includes(verdict) ? 'fail'
     : {running: 'progress', 'not-run': 'not-run', 'NEEDS-INFO': 'needs-info'}[verdict] || '';
   const name = roles[role];
@@ -218,7 +220,8 @@ function focusCard(key) {
 }
 
 function renderDetail({job, rounds, events: entries, agents = {}, planner_id: plannerId}) {
-  const meta = node('p', `${stageLabel(job)} · Round ${job.round}${job.risk ? ` · ${job.risk} risk` : ''}`, 'run-meta');
+  const meta = node('p', [stageLabel(job), `Round ${job.round}`, job.risk && `${job.risk} risk`,
+    job.profile === 'quick' && 'Quick path'].filter(Boolean).join(' · '), 'run-meta');
   const links = linksFor(job, true);
   const detail = el('detail');
   const openRounds = new Map(Array.from(detail.querySelectorAll('details')).map((entry) => [entry.dataset.round, entry.open]));

@@ -19,6 +19,7 @@ class RoutedTask:
     parent_git_url: str
     scope: str
     planner_id: str = None
+    quick: bool = False
 
     @property
     def branch(self):
@@ -54,7 +55,7 @@ def cascade_jobs(repositories, parent, provider, issue, command):
     with State(parent) as state:
         plan = state.workspace_plan(number)
         if plan is None:
-            if command == "publish":
+            if command != "run":
                 return None
             require(issue["body"].strip(), "Workspace planning needs information. Add the scope to the parent issue description.")
             executable = codex_executable()
@@ -71,9 +72,10 @@ def cascade_jobs(repositories, parent, provider, issue, command):
             require(isinstance(report, str) and report.strip(), "Workspace planner returned an empty report.")
             if result.get("verdict") == "NEEDS-INFO":
                 raise Refused("Workspace planning needs information. " + report[:2000])
-            require(result.get("verdict") == "READY", "Workspace planner returned an invalid verdict.")
+            require(result.get("verdict") in ("READY", "QUICK"), "Workspace planner returned an invalid verdict.")
             selected = list(validated_tasks(repositories, result.get("tasks")))
             plan = {"issue": issue, "report": report,
+                    "quick": result["verdict"] == "QUICK" and len(selected) == 1,
                     "planner_id": recorded_agent_id(artifacts / "workspace-plan.jsonl"),
                     "tasks": [{"repository": alias, "scope": scope, "git_url": config["git_url"],
                                "checkout": config["checkout"]} for alias, config, scope in selected]}
@@ -84,7 +86,8 @@ def cascade_jobs(repositories, parent, provider, issue, command):
             for (_, config, _), task in zip(selected, plan["tasks"]):
                 require((config["git_url"], config["checkout"]) == (task["git_url"], task["checkout"]),
                         "A planned repository changed. Use a fresh factory state to replan.")
-    return [(alias, number, config, RoutedTask(provider, issue, parent["git_url"], scope, plan["planner_id"]))
+    return [(alias, number, config, RoutedTask(provider, issue, parent["git_url"], scope, plan["planner_id"],
+                                             quick=plan.get("quick", False)))
             for alias, config, scope in selected]
 
 
@@ -96,7 +99,7 @@ def jobs_for_command(repositories, selectors, command):
             provider = workspace.Provider(parent["scm"], checkout=parent.get("checkout"), git_url=parent.get("git_url"))
             issue = provider.issue(int(selector))
             explicit = workspace.parent_routes(issue.get("body") or "")
-            if explicit and command == "run":
+            if explicit and command in ("run", "resume"):
                 jobs.extend((*row, None) for row in workspace.select_jobs(repositories, explicit))
                 continue
             if not explicit:
@@ -105,7 +108,7 @@ def jobs_for_command(repositories, selectors, command):
                     jobs.extend(cascade)
                     continue
         jobs.extend((*row, None) for row in workspace.select_jobs(
-            repositories, [selector], follow_parent=command == "run"))
+            repositories, [selector], follow_parent=command in ("run", "resume")))
     seen = set()
     for alias, number, _, route in jobs:
         key = (alias, -number if route else number)

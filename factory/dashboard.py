@@ -31,6 +31,7 @@ def summarize(job, when=None, last_event=None, started=None, active=False):
     role = last_event.removeprefix("started-") if last_event else None
     return {"id": job_id(job), "number": issue["number"], "title": issue["title"], "issue_url": issue.get("url"),
             "workspace_task": bool(issue.get("workspace_parent")),
+            "profile": job.get("profile"),
             "request_url": job.get("request_url"), "stage": job["stage"], "round": job["round"],
             "risk": job["results"].get("intake", {}).get("risk"), "updated": when, "last_event": last_event,
             "started": started, "active_role": role if active and role in ROLES else None,

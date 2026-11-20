@@ -156,6 +156,40 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual([call.args[1] for call in run.call_args_list[-2:]], ["publish", "publish"])
             codex.return_value.plan_workspace.assert_called_once()
 
+    def test_workspace_resume_reuses_quick_plan_with_no_new_planning_or_publish(self):
+        parent = self.repository("parent")
+        frontend = self.repository("parent/frontend")
+        records = {".": parent, "fe": frontend}
+        configs = {path: {"checkout": str(path), "git_url": f"https://example.com/team/{path.name}.git",
+                          "scm": {"repository": f"team/{path.name}"},
+                          "state_dir": str(self.directory / (path.name + "-state"))}
+                   for path in records.values()}
+        issue = {"number": 42, "title": "Change a default", "body": "Default to Feedback",
+                 "url": "https://example.com/team/parent/-/issues/42"}
+        args = Namespace(project=parent, action="run", jobs=["42"])
+        with (patch("factory.__main__.workspace_root", return_value=parent),
+              patch("factory.__main__.discover", return_value=records),
+              patch("factory.workspace.configured", side_effect=configs.__getitem__),
+              patch("factory.workspace.Provider") as provider,
+              patch("factory.cascade.codex_executable", return_value="/test/codex"),
+              patch("factory.cascade.Codex") as codex,
+              patch("factory.__main__.operate", side_effect=[{"stage": "needs-human"}, {"stage": "ready"}]) as run,
+              redirect_stdout(io.StringIO()) as stdout):
+            provider.return_value.issue.return_value = issue
+            codex.return_value.plan_workspace.return_value = {"verdict": "QUICK", "report": "One task", "tasks": [
+                {"repository": "fe", "scope": "Change the existing default and test it."},
+            ]}
+            workspace_command(args)
+            args.action = "resume"
+            stdout.truncate(0)
+            stdout.seek(0)
+            workspace_command(args)
+            self.assertEqual(json.loads(stdout.getvalue())[0]["result"]["stage"], "ready")
+            codex.return_value.plan_workspace.assert_called_once()
+            self.assertEqual([call.args[1] for call in run.call_args_list], ["run", "resume"])
+            self.assertTrue(all(call.kwargs["route"].quick for call in run.call_args_list))
+            self.assertEqual(provider.return_value.update_workspace_note.call_count, 2)
+
     def test_workspace_cascade_refuses_a_repository_outside_the_workspace(self):
         parent = self.repository("parent")
         config = {"state_dir": str(self.directory / "state")}

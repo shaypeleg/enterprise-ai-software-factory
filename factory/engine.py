@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import Refused, require
 from .credentials import repository_credential
 from .project import discovered_remote
-from .runtime import clean_env, execute, recorded_agent_id
+from .runtime import ProcessFailed, check_diagnostics, clean_env, execute, recorded_agent_id
 from .workspace import workspace_models, workspace_parent
 
 
@@ -27,7 +27,7 @@ STOP = {"ready", "needs-human", "needs-info", "rejected", "published"}
 
 def review_roles(job):
     roles = ("code", "security")
-    if "ui" in job["results"].get("intake", {}).get("surfaces", ()):
+    if job.get("profile") != "quick" and "ui" in job["results"].get("intake", {}).get("surfaces", ()):
         roles += ("ux", "ui")
     return roles
 
@@ -99,6 +99,10 @@ class State:
 
     def all(self):
         return [json.loads(row[0]) for row in self.db.execute("SELECT value FROM jobs ORDER BY id")]
+
+    def has_event(self, job, event):
+        return self.db.execute("SELECT 1 FROM events WHERE job=? AND event=? LIMIT 1",
+                               (job_id(job), event)).fetchone() is not None
 
 
 class Engine:
@@ -257,12 +261,51 @@ class Engine:
                 "new or changed symlinks require manual handling")
         return changed
 
+    def quick_change(self, job, changed):
+        """Escalate if the actual diff outgrows the intake brief."""
+        if len(changed) > 5 or any(
+            path.startswith(".") or path.endswith((".lock", ".lockb")) or
+            set(Path(path.lower()).parts) & {
+                "auth", "security", "infra", "migrations", "package.json", "package-lock.json",
+                "pyproject.toml", "go.mod", "go.sum", "requirements.txt", "pnpm-lock.yaml",
+            } for path in changed
+        ):
+            return False
+        path = self.path(job)
+        diff = self.git(path, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
+                        "--numstat", "-z", job["base"], "--").stdout
+        lines, tracked = 0, set()
+        for entry in filter(None, diff.split(b"\0")):
+            added, deleted, name = entry.split(b"\t", 2)
+            if not (added.isdigit() and deleted.isdigit()):
+                return False
+            lines += int(added) + int(deleted)
+            tracked.add(os.fsdecode(name))
+        for name in set(changed) - tracked:
+            file = path / name
+            if not file.is_file() or file.stat().st_size > 24_000:
+                return False
+            content = file.read_bytes()
+            if b"\0" in content:
+                return False
+            lines += len(content.splitlines())
+        return lines <= 180
+
+    def artifact_dir(self, job, round_number=None):
+        return self.state.root / "artifacts" / str(job_id(job)) / str(round_number or job["round"])
+
     def stage(self, job, role):
         before = self.fingerprint(job)
         context = {"issue": job["issue"], "base_commit": job["base"], "round": job["round"],
                    "results": job["results"], "policy": {"protected_paths": list(PROTECTED)
                    + self.config["protected_paths"], "merge": "human only", "deploy": "CI only"}}
-        directory = self.state.root / "artifacts" / str(job_id(job)) / str(job["round"])
+        directory = self.artifact_dir(job)
+        if job.get("profile"):
+            context["profile"] = job["profile"]
+        if role == "build" and (failure := job.get("check_failure")):
+            log = self.artifact_dir(job, failure["round"]) / f"check-{failure['index']}.log"
+            context["failed_check"] = {"summary": job["results"]["feedback"],
+                                       "output": check_diagnostics(log)}
         try:
             self.state.save(job, "started-" + role)
             model_settings = {"models": job["models"]} if "models" in job else {}
@@ -290,19 +333,44 @@ class Engine:
         before = self.fingerprint(job)
         changed = self.safe_paths(job)
         require(changed, "builder produced no changes")
-        directory = self.state.root / "artifacts" / str(job_id(job)) / str(job["round"])
+        if job.get("profile") == "quick" and not self.quick_change(job, changed):
+            return False
+        directory = self.artifact_dir(job)
         directory.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="checks-", dir=directory) as home:
             for index, command in enumerate(self.config["checks"]):
-                execute(command, self.path(job), clean_env(home), self.config["check_timeout_seconds"],
-                        directory / ("check-%s.log" % index))
-        require(before == self.fingerprint(job), "checks modified candidate files")
+                try:
+                    execute(command, self.path(job), clean_env(home), self.config["check_timeout_seconds"],
+                            directory / f"check-{index}.log")
+                except (Refused, OSError, KeyboardInterrupt) as error:
+                    self.verify_gate_fingerprint(job, before)
+                    if not isinstance(error, ProcessFailed):
+                        raise
+                    # Persist the check locator, not the command arguments or raw output.
+                    job["check_failure"] = {"index": index, "round": job["round"]}
+                    label = Path(command[0]).name
+                    if label in ("npm", "pnpm", "yarn") and command[1:3] in (["run", "lint"], ["run", "test"]):
+                        label += " " + " ".join(command[1:3])
+                    message = f"Check {index + 1} ({label}) exited with status {error.returncode}."
+                    raise ProcessFailed(error.returncode, message) from None
+        self.verify_gate_fingerprint(job, before)
+        job.pop("check_failure", None)
+        for role in ("code", "security", "ux", "ui", "handoff", "feedback"):
+            job["results"].pop(role, None)
         job["fingerprint"] = before
         job["results"]["gate"] = {"verdict": "PASS", "fingerprint": before}
         self.state.save(job, "gate-pass")
+        return True
+
+    def verify_gate_fingerprint(self, job, before):
+        try:
+            require(before == self.fingerprint(job), "a configured check modified candidate files")
+        except Refused:
+            self.state.save(job, "check-candidate-mutation")
+            raise
 
     def retry(self, job, why):
-        if job["round"] >= self.config["max_rounds"]:
+        if job["round"] - job.get("round_start", 1) + 1 >= self.config["max_rounds"]:
             job["stage"] = "needs-human"
         else:
             job["round"] += 1
@@ -310,24 +378,62 @@ class Engine:
         job["results"]["feedback"] = why
         self.state.save(job, "revision-required")
 
-    def run(self, number, route=None):
+    def reopen(self, job):
+        require(not self.state.has_event(job, "unexpected-candidate-mutation"),
+                "a read-only stage modified this candidate; inspect it and use fresh factory state")
+        require(not self.state.has_event(job, "check-candidate-mutation"),
+                "a configured check modified this candidate; inspect it and use fresh factory state")
+        changed = self.safe_paths(job)
+        results = job["results"]
+        specified = results.get("spec", {}).get("verdict") == "READY" or job.get("profile") == "quick"
+        job["round"] += 1
+        job["round_start"] = job["round"]
+        job.pop("fingerprint", None)
+        for role in ("gate", "code", "security", "ux", "ui", "handoff"):
+            results.pop(role, None)
+        if changed and specified:
+            job["stage"] = "gate"
+            if results.get("build", {}).get("verdict") == "BLOCKED":
+                results.pop("build")
+        else:
+            job["stage"] = "build" if specified else "spec"
+        self.state.save(job, "resumed")
+
+    def full_pipeline(self, job):
+        job["profile"] = "full"
+        for role in ("gate", "code", "security", "ux", "ui", "handoff"):
+            job["results"].pop(role, None)
+        job.pop("fingerprint", None)
+        job["stage"] = "intake"
+        self.state.save(job, "expanded-review")
+
+    def run(self, number, route=None, *, resume=False):
         origin = self.verify_checkout()
         current = route.current_issue() if route else self.provider.issue(number)
         job = self.state.get(-number if route else number)
         if not job:
+            require(not resume, "no existing factory run for this issue")
             job = {"issue": current, "branch": "factory/issue-" + str(number), "stage": "intake",
                    "round": 1, "results": {}}
             if route:
                 job.update(id=-number, branch=route.branch, planner_id=route.planner_id)
+                if route.quick:
+                    job.update(profile="quick", stage="build")
             if self.config.get("model_source") == "workspace":
                 job["models"] = workspace_models(workspace_parent(self.checkout))
             self.state.save(job, "created")
-        if job["stage"] in STOP and not route:
+        if job["stage"] in STOP and not route and not resume:
             return job
         require(current == job["issue"], "issue changed; inspect it and use a fresh state_dir")
-        if job["stage"] in STOP:
+        if job["stage"] in STOP and not (resume and job["stage"] == "needs-human"):
+            require(not resume or job["stage"] in ("ready", "published"),
+                    f"a {job['stage']} run cannot resume; resolve intake and start with fresh factory state")
             return job
         self.prepare(job, origin)
+        if resume and (job["stage"] == "needs-human" or (
+            job["stage"] in ("review", "handoff") and self.fingerprint(job) != job.get("fingerprint")
+        )):
+            self.reopen(job)
         try:
             while job["stage"] not in STOP:
                 stage = job["stage"]
@@ -335,27 +441,53 @@ class Engine:
                     result = self.stage(job, stage)
                     verdict = result["verdict"]
                     if stage == "intake":
-                        job["stage"] = {"ACCEPT": "spec", "NEEDS-INFO": "needs-info",
-                                        "REJECT": "rejected"}[verdict]
+                        if (verdict == "QUICK" and job.get("profile") != "full"
+                                and result["risk"] == "low" and "security" not in result["surfaces"]):
+                            job.update(profile="quick", stage="build")
+                        else:
+                            job["stage"] = {"ACCEPT": "spec", "QUICK": "spec", "NEEDS-INFO": "needs-info",
+                                            "REJECT": "rejected"}[verdict]
+                    elif stage == "build" and job.get("profile") == "quick" and (
+                        result["risk"] != "low" or "security" in result["surfaces"]
+                    ):
+                        self.full_pipeline(job)
                     else:
                         job["stage"] = ("gate" if stage == "build" else "build") if verdict == "READY" else "needs-human"
                 elif stage == "gate":
                     try:
-                        self.gate(job)
-                    except Refused as error:
+                        passed = self.gate(job)
+                    except ProcessFailed as error:
                         self.retry(job, str(error))
                         continue
-                    job["stage"] = "review"
+                    except Refused as error:
+                        job["stage"] = "needs-human"
+                        job["results"]["feedback"] = str(error)
+                        self.state.save(job, "revision-required")
+                        continue
+                    if passed:
+                        job["stage"] = "review"
+                    else:
+                        self.full_pipeline(job)
                 elif stage == "review":
                     require(self.fingerprint(job) == job["fingerprint"], "candidate changed since gate")
                     results = [self.stage(job, role) for role in review_roles(job)]
-                    if any(result["verdict"] == "CHANGES" for result in results):
+                    if job.get("profile") == "quick" and results[0]["risk"] != "low":
+                        self.full_pipeline(job)
+                    elif any(result["verdict"] == "CHANGES" for result in results):
                         self.retry(job, "Address every review marked CHANGES.")
                         continue
-                    job["stage"] = "handoff"
+                    else:
+                        job["stage"] = "handoff"
                 elif stage == "handoff":
                     require(self.fingerprint(job) == job["fingerprint"], "candidate changed since review")
-                    job["stage"] = "ready" if self.stage(job, stage)["verdict"] == "READY" else "needs-human"
+                    if job.get("profile") == "quick":
+                        job["results"]["handoff"] = {"verdict": "READY", "report":
+                            "Configured checks and independent code and security reviews passed. "
+                            "Review the local diff and verify the issue’s acceptance checks before merging."}
+                        self.state.save(job, "stage-handoff")
+                        job["stage"] = "ready"
+                    else:
+                        job["stage"] = "ready" if self.stage(job, stage)["verdict"] == "READY" else "needs-human"
                 else:
                     raise Refused("unknown persisted stage")
                 self.state.save(job, "transition")

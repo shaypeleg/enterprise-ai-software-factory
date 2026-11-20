@@ -211,7 +211,8 @@ class ProjectSetupTests(unittest.TestCase):
             "printf '%s\\n' '"
             + json.dumps({"id": 1, "result": {}}) + "' '"
             + json.dumps({"id": 2, "result": {"data": [
-                {"id": "catalog-entry", "model": "example-sol", "displayName": "Example Sol"},
+                {"id": "catalog-entry", "model": "example-sol", "displayName": "Example Sol",
+                 "supportedReasoningEfforts": [{"reasoningEffort": "low"}]},
                 {"model": "example-terra"},
                 {"model": "hidden-model", "hidden": True},
                 {"model": "invalid/model"},
@@ -224,6 +225,7 @@ class ProjectSetupTests(unittest.TestCase):
                 {"id": "example-sol", "label": "Example Sol"},
                 {"id": "example-terra", "label": "example-terra"},
             ])
+            self.assertEqual([entry["efforts"] for entry in available_models(include_effort=True)], [["low"], []])
 
     def test_model_catalog_endpoint_requires_private_session_and_refreshes_results(self):
         with patch("factory.setup.HTTPServer") as factory_server:

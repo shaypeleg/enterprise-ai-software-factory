@@ -13,7 +13,11 @@ The factory turns labeled GitHub or GitLab issues into reviewed code changes. It
 
 1. **Intake and specification.** Assess the issue, then define the work and acceptance criteria.
 2. **Build and checks.** Make changes in a separate Git worktree and run the configured checks.
-3. **Review and handoff.** Run code and security reviews and, when intake flags a UI change, UI and UX reviews. Failed checks or requests for changes can send the job back to build within the configured limit. The handoff summarizes the evidence and marks the job `ready` when all gates pass. A job can stop early for missing information or human review.
+3. **Review and handoff.** Run code and security reviews. The full pipeline also routes UI and UX specialists when intake flags a UI change. The handoff summarizes the evidence and marks the job `ready` when checks and reviews pass.
+
+Clear, low-risk changes can use the intake or workspace plan as their brief. These runs use fewer model calls and request low reasoning effort for build and code review when the selected model supports it. They still run every configured check and independent code and security reviews. Larger diffs or higher-risk findings trigger the full pipeline.
+
+If a check fails, the builder gets the failed check and a short diagnostic excerpt, then the factory reruns the checks after repair. The configured round limit bounds retries. Use `$factory resume 42` to continue a stopped candidate after reviewing the blocker. The factory keeps its prior rounds and revalidates any saved candidate changes.
 
 Use `$factory status` for recorded jobs or `$factory dashboard` for the live stage board. Green tags show passing checks and reviews, red tags show failures or changes requested, and dotted tags show work in progress. Open a card for reports and issue links. If you close the tab, reopen the same private URL while the dashboard command is running.
 
@@ -25,6 +29,7 @@ Inspect the ready candidate and use `$factory publish 42` to push the candidate 
 
 - `$factory workspace list` shows repository aliases. Use `$factory workspace setup` to configure each checkout. Set models on the parent once. Children use them by default, with a repository-level override available.
 - `$factory workspace run 42` plans and runs work across configured repositories from one labeled parent issue. It updates a status note on that issue with the repositories and outcomes. Open a run card to see the Codex agent IDs for its stages.
+- `$factory workspace resume 42` resumes existing candidates and reuses the saved workspace plan. Use the same selectors as the original run.
 - If the parent has an explicit `factory-routes` block, the factory uses those existing child issues and their queue labels.
 - `$factory workspace publish 42` publishes the verified candidates for an automatic cascade when you ask.
 - `$factory workspace run backend=17 frontend=23` selects issues directly. Replace the aliases with those printed by `workspace list`. Use `$factory workspace publish backend=17` to publish a ready candidate for a specific repository.

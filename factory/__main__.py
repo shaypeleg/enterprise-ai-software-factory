@@ -20,8 +20,8 @@ def operate(config, command, issue=None, publish=False, route=None):
     if command == "queue":
         return provider.queue()
     with State(config) as state:
-        executable = codex_executable() if command == "run" else None
-        if command == "run":
+        executable = codex_executable() if command in ("run", "resume") else None
+        if command in ("run", "resume"):
             require(executable, "install the OpenAI Codex CLI before running agents")
             print("Local pilot: worktrees and environment filtering are not enterprise isolation.",
                   file=sys.stderr)
@@ -30,7 +30,7 @@ def operate(config, command, issue=None, publish=False, route=None):
             return state.all()
         if command == "publish":
             return engine.publish(issue, route=route)
-        result = engine.run(issue, route=route)
+        result = engine.run(issue, route=route, resume=command == "resume")
         return engine.publish(issue, route=route) if publish and result["stage"] == "ready" else result
 
 
@@ -57,7 +57,7 @@ def workspace_command(args):
                 for alias, path in repositories.items()})
         return
     path_results = {}
-    if action in ("run", "publish"):
+    if action in ("run", "resume", "publish"):
         jobs = jobs_for_command(repositories, args.jobs, action)
         if action == "publish":
             for alias, issue, config, route in jobs:
@@ -105,7 +105,7 @@ def workspace_command(args):
             for _, row in rows:
                 row["parent_note_error"] = str(error)
             failed = True
-    report(results if action in ("run", "publish") else path_results)
+    report(results if action in ("run", "resume", "publish") else path_results)
     if failed:
         sys.exit(1)
 
@@ -125,7 +125,7 @@ def main():
             command.add_argument("--skip-setup", action="store_true", help="install or update the skill without opening setup")
     for name in ("validate", "queue", "status"):
         commands.add_parser(name)
-    for name in ("run", "publish"):
+    for name in ("run", "resume", "publish"):
         command = commands.add_parser(name)
         command.add_argument("issue", type=int)
         if name == "run":
@@ -138,7 +138,7 @@ def main():
     setup = actions.add_parser("setup")
     setup.add_argument("repository", nargs="?")
     setup.add_argument("--no-browser", action="store_true")
-    for action in ("run", "publish"):
+    for action in ("run", "resume", "publish"):
         operation = actions.add_parser(action)
         operation.add_argument("jobs", nargs="+", metavar="ISSUE|REPOSITORY=ISSUE")
     args = parser.parse_args()
@@ -185,6 +185,9 @@ def main():
     except (Refused, KeyError, OSError, ValueError) as error:
         print("factory: " + str(error), file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("factory: interrupted. Use resume to continue an existing run.", file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == "__main__":

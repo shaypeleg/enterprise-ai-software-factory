@@ -206,6 +206,7 @@ $factory queue
 $factory status
 $factory dashboard
 $factory run 42
+$factory resume 42
 $factory publish 42
 ```
 
@@ -296,6 +297,7 @@ $factory workspace setup
 $factory workspace queue
 $factory workspace status
 $factory workspace run 42
+$factory workspace resume 42
 $factory workspace run agent-backend=17 agent-frontend=23
 $factory workspace publish agent-backend=17 agent-frontend=23
 ```
@@ -349,9 +351,14 @@ candidate's sign-off when the environment changes.
 
 - SQLite snapshots and append-only application events are written transactionally
   with `synchronous=FULL`. One local worker holds the state directory lock.
-- Restart an interrupted job with the same `run N`; incomplete stages are rerun.
-  Read-only stage mutation parks the job instead of trusting a rerun.
-- `max_rounds` bounds correction attempts. Each model/check has a timeout; model
+- Use `resume N` or `workspace resume N` to continue existing candidates. The
+  factory preserves the pinned base, worktree and prior rounds. A stopped
+  candidate with saved changes goes back through checks and review. Issue changes
+  and read-only stage mutations require fresh factory state.
+- A failed check sends its identity and a bounded diagnostic excerpt to the next
+  builder attempt. Full logs stay in private run artifacts. `max_rounds` bounds
+  correction attempts, and an explicit resume starts a fresh retry allowance for
+  a stopped candidate. Each model and check has a timeout. Model
   and check process groups are killed on timeout. Provider reads have bounded
   retries and pagination; ambiguous writes are reconciled on the next invocation.
 - Publishing retries reuse the recorded commit and look up an existing PR/MR by
@@ -361,6 +368,10 @@ candidate's sign-off when the environment changes.
   must also match, so Git clean filters cannot substitute unreviewed bytes. Protected additions,
   modifications, deletions and renames are rejected.
 - Code and security reviews are mandatory on every job. Intake cannot disable them.
+- Clear, localized, low-risk issues use the intake or workspace plan as the
+  implementation brief and receive an automatic handoff after checks and reviews.
+  The builder and code reviewer use low effort when their selected Codex models
+  advertise it. Larger diffs and risk findings route to the full pipeline.
 - Configuration changes require a fresh state directory so previous evidence
   cannot silently acquire a different policy. Do not delete old audit evidence.
 - `needs-info`, `needs-human`, `rejected` and `published` are parked states in

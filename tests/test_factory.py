@@ -219,6 +219,90 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.runtime.calls.count("build"), 2)
         self.assertNotIn("code", self.runtime.calls)
 
+    def test_failed_check_gives_builder_diagnostics_and_repairs_automatically(self):
+        self.config["checks"] = [["python3", "-c",
+            "from pathlib import Path; "
+            "Path('lint-fixed').exists() or (__import__('sys').exit("
+            "'calc.py:2: E123 fix indentation\\nAPI_KEY=fixture-secret-value'))"]]
+
+        def build(worktree, context):
+            if context["round"] == 2:
+                failure = context["failed_check"]
+                self.assertIn("Check 1", failure["summary"])
+                self.assertIn("E123 fix indentation", failure["output"])
+                self.assertNotIn("fixture-secret-value", failure["output"])
+                (worktree / "lint-fixed").write_text("Repaired")
+            return {"verdict": "READY", "report": "Implementation complete", "risk": "low", "surfaces": []}
+
+        self.runtime.behavior["build"] = build
+        job = self.engine.run(7)
+        self.assertEqual((job["stage"], job["round"]), ("ready", 2))
+        self.assertEqual(self.runtime.calls, ["intake", "spec", "build", "build", "code", "security", "handoff"])
+        self.assertNotIn("fixture-secret-value", json.dumps(self.state.all()))
+
+    def test_resume_revalidates_manually_fixed_legacy_candidate_and_keeps_rounds(self):
+        self.config["checks"] = [["python3", "-c", "from pathlib import Path; assert Path('lint-fixed').exists()"]]
+        stopped = self.engine.run(7)
+        self.assertEqual(stopped["stage"], "needs-human")
+        stopped.pop("check_failure")
+        stopped["results"]["feedback"] = "process failed; inspect private stage logs"
+        stopped["results"]["build"]["verdict"] = "BLOCKED"
+        self.state.save(stopped, "transition")
+        (self.engine.path(stopped) / "lint-fixed").write_text("Repaired by operator")
+        self.runtime.calls.clear()
+        self.assertEqual(self.engine.run(7)["stage"], "needs-human")
+        resumed = self.engine.run(7, resume=True)
+        self.assertEqual((resumed["stage"], resumed["round"], resumed["base"]), ("ready", 3, self.base))
+        self.assertEqual(self.runtime.calls, ["code", "security", "handoff"])
+        self.assertTrue(self.state.has_event(resumed, "revision-required"))
+        self.assertTrue(self.state.has_event(resumed, "resumed"))
+        self.assertTrue(self.state.has_event(resumed, "gate-pass"))
+
+    def test_resume_grants_a_fresh_bounded_retry_allowance(self):
+        self.config["checks"] = [["python3", "-c", "raise SystemExit(1)"]]
+        self.assertEqual(self.engine.run(7)["round"], 2)
+        self.runtime.calls.clear()
+        resumed = self.engine.run(7, resume=True)
+        self.assertEqual((resumed["stage"], resumed["round"]), ("needs-human", 4))
+        self.assertEqual(self.runtime.calls, ["build"])
+
+    def test_resume_missing_run_does_not_start_one(self):
+        self.provider.current["number"] = 9
+        with self.assertRaisesRegex(Refused, "no existing"):
+            self.engine.run(9, resume=True)
+        self.assertIsNone(self.state.get(9))
+        self.assertEqual(self.runtime.calls, [])
+
+    def test_quick_issue_reuses_its_intake_and_keeps_checks_and_independent_review(self):
+        self.runtime.behavior["intake"] = "QUICK"
+        job = self.engine.run(7)
+        self.assertEqual((job["stage"], job["profile"]), ("ready", "quick"))
+        self.assertEqual(self.runtime.calls, ["intake", "build", "code", "security"])
+        self.assertEqual(job["results"]["gate"]["verdict"], "PASS")
+        self.assertEqual(job["results"]["handoff"]["verdict"], "READY")
+
+    def test_quick_issue_expands_to_full_review_for_a_broad_diff(self):
+        self.runtime.behavior["intake"] = "QUICK"
+
+        def build(worktree, context):
+            (worktree / "large-diff.py").write_text("# filler\n" * 181)
+            return {"verdict": "READY", "report": "Implemented", "risk": "low", "surfaces": []}
+
+        self.runtime.behavior["build"] = build
+        job = self.engine.run(7)
+        self.assertEqual((job["stage"], job["profile"]), ("ready", "full"))
+        self.assertEqual(self.runtime.calls, ["intake", "build", "intake", "spec", "build", "code", "security", "handoff"])
+
+    def test_a_check_cannot_change_the_candidate_and_trigger_a_repair(self):
+        self.config["checks"] = [["python3", "-c",
+            "from pathlib import Path; Path('calc.py').write_text('changed'); raise SystemExit(1)"]]
+        job = self.engine.run(7)
+        self.assertEqual(job["stage"], "needs-human")
+        self.assertEqual(job["results"]["feedback"], "a configured check modified candidate files")
+        self.assertEqual(self.runtime.calls, ["intake", "spec", "build"])
+        with self.assertRaisesRegex(Refused, "configured check modified"):
+            self.engine.run(7, resume=True)
+
     def test_review_changes_returns_to_builder(self):
         self.runtime.behavior["security"] = "CHANGES"
         job = self.engine.run(7)
@@ -255,6 +339,8 @@ class EngineTests(unittest.TestCase):
             self.engine.run(7)
         self.assertEqual(self.state.get(7)["stage"], "needs-human")
         self.assertEqual(self.engine.run(7)["stage"], "needs-human")
+        with self.assertRaisesRegex(Refused, "read-only stage modified"):
+            self.engine.run(7, resume=True)
 
     def test_crash_resumes_from_persisted_stage(self):
         def crash(worktree, context):
@@ -265,7 +351,7 @@ class EngineTests(unittest.TestCase):
             self.engine.run(7)
         self.assertEqual(self.state.get(7)["stage"], "build")
         self.runtime.behavior.clear()
-        self.assertEqual(self.engine.run(7)["stage"], "ready")
+        self.assertEqual(self.engine.run(7, resume=True)["stage"], "ready")
         self.assertEqual(self.runtime.calls.count("intake"), 1)
 
     def test_protected_addition_and_deletion_are_blocked(self):
@@ -339,7 +425,7 @@ class EngineTests(unittest.TestCase):
     def test_issue_change_rejected_on_resume(self):
         self.provider.current["body"] = "New scope"
         with self.assertRaisesRegex(Refused, "issue changed"):
-            self.engine.run(7)
+            self.engine.run(7, resume=True)
 
     def test_origin_mismatch_rejected(self):
         git(self.repo, "remote", "set-url", "origin", "https://evil.example/repo.git")
@@ -634,6 +720,17 @@ class RuntimeTests(unittest.TestCase):
                     with self.assertRaisesRegex(Refused, "Sign in to Codex"):
                         runtime.run("build", root, {}, root / "logs")
             execute_role.assert_not_called()
+
+    def test_quick_effort_uses_only_advertised_low_effort_models(self):
+        runtime = Codex({"models": {"default": "auto", "build": "low-model", "code": "custom-model"}}, "codex")
+        result = {"verdict": "READY", "report": "Implemented.", "risk": "low", "surfaces": []}
+        catalog = [{"id": "low-model", "efforts": ["low", "medium"]}]
+        with (patch("factory.model_catalog.available_models", return_value=catalog) as models,
+              patch.object(runtime, "structured", side_effect=[result, dict(result, verdict="PASS"), result]) as run):
+            for role, profile in [("build", "quick"), ("code", "quick"), ("build", "full")]:
+                runtime.run(role, Path("."), {"profile": profile}, Path("logs"))
+        models.assert_called_once_with(include_effort=True)
+        self.assertEqual([call.kwargs for call in run.call_args_list], [{"effort": "low"}, {}, {}])
 
     def test_invalid_codex_verdict_is_refused(self):
         with tempfile.TemporaryDirectory() as temp:
